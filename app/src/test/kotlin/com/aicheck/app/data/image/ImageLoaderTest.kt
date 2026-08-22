@@ -8,12 +8,20 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.GraphicsMode
 import java.io.File
 
 /**
  * Covers the failure paths a share-sheet URI can hit: not an image at all, and a
  * URI that can't be opened — both must fail with a specific, honest
  * [ImageLoadException] rather than crashing the analysis pipeline.
+ *
+ * [GraphicsMode.Mode.NATIVE] is required here: Robolectric's default ("legacy")
+ * BitmapFactory shadow doesn't actually validate image bytes — it fakes a
+ * successful decode for arbitrary input, which would make these malformed-image
+ * tests pass vacuously (no exception ever thrown) regardless of what ImageLoader
+ * does. NATIVE mode routes through Robolectric's real Skia-backed decoder, so
+ * decode failures here reflect what a real device would actually do.
  *
  * These assert [ImageLoadException] broadly rather than a specific subtype:
  * whether malformed bytes are classified as [ImageLoadException.Unsupported] (failed
@@ -24,6 +32,7 @@ import java.io.File
  * specific ImageLoadException," not which exact subtype.
  */
 @RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ImageLoaderTest {
 
     private val context = ApplicationProvider.getApplicationContext<Context>()

@@ -38,14 +38,18 @@
 
             <!--
               Opening a local image file directly (e.g. a file manager "Open with").
-              No BROWSABLE category: this isn't a web/app-link — it only ever receives
-              local content://file:// URIs from another app on-device, never a
-              browser-navigated http(s) URL, so it deliberately has no android:scheme.
+              No BROWSABLE category: this isn't a web/app-link, only ever a local
+              content:// or file:// URI from another on-device app. Schemes are
+              listed explicitly (rather than relying on the platform's documented
+              content:/file: default for a scheme-less <data> element) so Android
+              Lint's AppLinkUrlError check can see this is intentional, not a
+              malformed deep link.
             -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="image/*" />
+                <data android:scheme="content" android:mimeType="image/*" />
+                <data android:scheme="file" android:mimeType="image/*" />
             </intent-filter>
         </activity>
 

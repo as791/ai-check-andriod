@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Simple, dependency-free vector mark: a magnifier over a checkmark, standing in
+     for a real designed icon. Replace with a proper asset before a store listing. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,24 C68.4,24 80,35.6 80,50 C80,56.1 77.9,61.7 74.4,66.1 L86,77.7 L80.7,83 L69.1,71.4 C64.7,74.9 59.1,77 53,77 C38.6,77 27,65.4 27,51 C27,36.6 39.6,24 54,24 Z M54,32 C43.5,32 35,40.5 35,51 C35,61.5 43.5,70 54,70 C64.5,70 73,61.5 73,51 C73,40.5 64.5,32 54,32 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M46.5,50.5 L51,55 L61.5,44.5 L64.5,47.5 L51,61 L43.5,53.5 Z" />
+</vector>

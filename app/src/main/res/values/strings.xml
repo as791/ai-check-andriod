@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AI Check</string>
+
+    <!-- Home -->
+    <string name="home_title">Is this image AI-generated?</string>
+    <string name="home_choose_image">Choose Image</string>
+    <string name="home_share_hint">Or share an image from another app to AI Check.</string>
+    <string name="home_recent_checks">Recent checks</string>
+    <string name="home_no_history">No checks yet. Choose an image to get started.</string>
+    <string name="home_view_all_history">View all</string>
+
+    <!-- Analyzing -->
+    <string name="analyzing_title">Analyzing image…</string>
+    <string name="analyzing_stage_provenance">Checking provenance</string>
+    <string name="analyzing_stage_metadata">Inspecting metadata</string>
+    <string name="analyzing_stage_visual">Running visual analysis</string>
+
+    <!-- Result -->
+    <string name="result_ai_likelihood">AI likelihood</string>
+    <string name="result_classification_high">HIGH AI LIKELIHOOD</string>
+    <string name="result_classification_uncertain">UNCERTAIN</string>
+    <string name="result_classification_low">LOW AI LIKELIHOOD</string>
+    <string name="result_why_heading">Why?</string>
+    <string name="result_important_heading">Important</string>
+    <string name="result_disclaimer">This is an estimate, not proof. AI-content detection can produce false positives and false negatives.</string>
+    <string name="result_share">Share Result</string>
+    <string name="result_check_another">Check Another</string>
+    <string name="result_error_title">Couldn\'t analyze this image</string>
+    <string name="result_error_unsupported">This file isn\'t a supported image format (JPEG, PNG, or WEBP).</string>
+    <string name="result_error_corrupt">This image file appears to be corrupted or unreadable.</string>
+    <string name="result_error_too_large">This image is too large to analyze on this device.</string>
+    <string name="result_error_generic">Something went wrong while analyzing this image. Please try again.</string>
+    <string name="result_try_again">Try again</string>
+
+    <!-- Signal types -->
+    <string name="signal_ai_classifier">Visual AI detector</string>
+    <string name="signal_content_credentials">Content Credentials</string>
+    <string name="signal_generator_metadata">Generator metadata</string>
+    <string name="signal_watermark">Known watermark</string>
+    <string name="signal_exif_metadata">Metadata</string>
+
+    <!-- History -->
+    <string name="history_title">History</string>
+    <string name="history_clear_all">Clear Analysis History</string>
+    <string name="history_clear_all_confirm_title">Clear all history?</string>
+    <string name="history_clear_all_confirm_body">This deletes every saved check on this device. This can\'t be undone.</string>
+    <string name="history_delete_one">Delete</string>
+    <string name="history_empty">No analyses yet.</string>
+    <string name="cancel">Cancel</string>
+    <string name="confirm">Confirm</string>
+    <string name="delete">Delete</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings &amp; Privacy</string>
+    <string name="settings_privacy_heading">Privacy</string>
+    <string name="settings_privacy_body">Your images are analyzed on this device whenever possible. AI Check does not upload your images to any server, and the app has no network permission for image analysis.</string>
+    <string name="settings_model_heading">Detection model</string>
+    <string name="settings_model_body_present">On-device classifier: %1$s</string>
+    <string name="settings_model_body_absent">On-device visual classifier: not bundled in this build. Metadata-based checks still run. See docs/MODEL.md in the project repository for how to add one.</string>
+    <string name="settings_about_heading">About</string>
+    <string name="settings_version">Version %1$s</string>
+    <string name="settings_licenses">Open-source licenses</string>
+
+    <!-- Content descriptions -->
+    <string name="cd_image_preview">Selected image preview</string>
+    <string name="cd_history_thumbnail">Thumbnail of a previous analysis</string>
+    <string name="cd_delete_icon">Delete this analysis</string>
+    <string name="cd_settings_icon">Settings</string>
+    <string name="cd_history_icon">History</string>
+    <string name="cd_back">Back</string>
+</resources>

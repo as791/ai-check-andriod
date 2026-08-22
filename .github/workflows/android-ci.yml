@@ -1,0 +1,47 @@
+name: Android CI
+
+# Runs on GitHub's hosted runners, which have normal internet access to
+# dl.google.com/maven.google.com — unlike the sandbox this project was scaffolded
+# in, which has that host blocked by network policy (see README "Known
+# limitations"). This workflow is the actual build/test gate for the project.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Lint
+        run: ./gradlew lint --stacktrace
+
+      - name: Unit tests (domain + app)
+        run: ./gradlew testDebugUnitTest :domain:test --stacktrace
+
+      - name: Assemble debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            app/build/reports/tests
+            domain/build/reports/tests
+            app/build/reports/lint-results-debug.html

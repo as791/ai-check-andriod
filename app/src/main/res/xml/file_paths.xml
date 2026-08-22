@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Only the app-private cache dir used for generated share-card images and
+         normalized copies of received images is exposed, and only via FileProvider's
+         short-lived content:// grants — never a broad external-storage path. -->
+    <cache-path name="shared" path="shared/" />
+</paths>

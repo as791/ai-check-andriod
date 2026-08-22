@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose owns theming (see ui/theme/Theme.kt); this base theme only sets the
+         window background before Compose takes over, avoiding a white flash. -->
+    <style name="Theme.AiCheck" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

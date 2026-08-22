@@ -36,11 +36,15 @@
                 <data android:mimeType="image/*" />
             </intent-filter>
 
-            <!-- Opening an image file directly (e.g. a file manager "Open with"). -->
+            <!--
+              Opening a local image file directly (e.g. a file manager "Open with").
+              No BROWSABLE category: this isn't a web/app-link — it only ever receives
+              local content://file:// URIs from another app on-device, never a
+              browser-navigated http(s) URL, so it deliberately has no android:scheme.
+            -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
                 <data android:mimeType="image/*" />
             </intent-filter>
         </activity>

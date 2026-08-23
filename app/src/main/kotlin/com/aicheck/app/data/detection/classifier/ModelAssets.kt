@@ -18,9 +18,19 @@ object ModelAssets {
         null
     }
 
-    /** Cheap existence check for UI (e.g. Settings) that avoids reading the whole file. */
+    /**
+     * Cheap existence check for UI (e.g. Settings) that avoids reading the whole file.
+     *
+     * Deliberately uses [android.content.res.AssetManager.open] (a stream), not
+     * [android.content.res.AssetManager.openFd] - openFd only succeeds for assets
+     * stored *uncompressed* in the APK, and Android's build tooling compresses
+     * `.onnx` by default (it isn't on the recognized no-compress extension list).
+     * openFd here would report "not bundled" even when the model is genuinely
+     * present and openModelBytes() (used for real inference) loads it fine -
+     * confirmed by actually bundling a real model and hitting exactly this.
+     */
     fun isBundled(context: Context): Boolean = try {
-        context.assets.openFd(ASSET_PATH).close()
+        context.assets.open(ASSET_PATH).close()
         true
     } catch (e: IOException) {
         false

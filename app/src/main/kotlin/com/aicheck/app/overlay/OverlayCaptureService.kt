@@ -319,9 +319,9 @@ class OverlayCaptureService : Service() {
         // A freshly (re)started VirtualDisplay needs a frame or two to start
         // producing images; briefly poll rather than failing on the first miss.
         var image: Image? = null
-        repeat(FRAME_POLL_ATTEMPTS) {
+        for (attempt in 0 until FRAME_POLL_ATTEMPTS) {
             image = reader.acquireLatestImage()
-            if (image != null) return@repeat
+            if (image != null) break
             Thread.sleep(FRAME_POLL_DELAY_MS)
         }
         val img = image ?: return@withContext null

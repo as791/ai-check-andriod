@@ -16,6 +16,16 @@ limitations"). This is the exact contingency the project brief asked for: ship t
 provider abstraction and precise instructions rather than a fabricated or
 unlicensed model file.
 
+**`Dafilab/ai-image-detector` is a gated repo on Hugging Face** — confirmed by
+actually running the conversion: a plain download gets a `401 GatedRepoError`, even
+though the model itself is public and Apache-2.0 licensed. You must be logged in
+*and* have clicked through the access request on the model page before downloading
+works (see step 1 in "Adding the model file"). Its `config.json` is also not in
+`timm`'s hub-config format (`timm.create_model("hf_hub:...")` fails with
+`KeyError: 'architecture'`), so the loading code has to build the bare
+`efficientnet_b4` architecture and load the checkpoint's weights separately rather
+than relying on `timm`'s hub auto-loading — see `tools/convert_model.py`.
+
 ## The target model
 
 | Field | Value |
@@ -62,19 +72,21 @@ in sync if you change them.
 ### Output interpretation
 
 `ModelConfig.interpretOutput` expects either:
-- a 2-class output `[human_probability, ai_probability]` (softmax-style), or
+- a 2-class output `[ai_probability, human_probability]` (softmax-style), or
 - a single sigmoid output = `P(ai)`.
 
-**This label order is this project's documented best guess, not something verified
-against the real exported graph** (none is bundled). Before trusting scores from a
-newly added model file:
-1. Open the exported `.onnx` file in [Netron](https://netron.app) and confirm the
-   real input tensor name (`ModelConfig.INPUT_NAME` currently assumes
-   `"pixel_values"`) and output shape.
-2. Check the model's `config.json` on Hugging Face for its `id2label` mapping to
-   confirm class order.
-3. Update `ModelConfig.kt` if either differs — a mismatched label order silently
-   inverts every result the app shows.
+**This label order is now confirmed**, not guessed: the real `config.json` on
+`Dafilab/ai-image-detector` publishes `"label_mapping": {"0": "ai", "1": "human"}`
+directly (fetched while working through "Adding the model file" below), i.e. output
+index 0 = P(ai). An earlier version of this file/code assumed the reverse
+(`[human, ai]`), which would have silently inverted every result — caught before a
+model was ever bundled, precisely because this doc insisted on confirming it rather
+than trusting the initial guess. Still worth a final sanity check once you have the
+real `.onnx` export:
+1. Open it in [Netron](https://netron.app) and confirm the real input tensor name
+   (`ModelConfig.INPUT_NAME` currently assumes `"pixel_values"`) and output shape.
+2. Update `ModelConfig.kt` if the input name differs, or if a future model version's
+   `config.json` changes `label_mapping`.
 
 ### Model size
 
@@ -104,15 +116,21 @@ with `tools/evaluate.py` if you do this.
 
 ## Adding the model file
 
-1. `pip install -r tools/requirements.txt`
-2. `python tools/convert_model.py --output app/src/main/assets/models/ai-image-detector.onnx`
+1. Request access to the gated repo: visit
+   https://huggingface.co/Dafilab/ai-image-detector while logged into a (free)
+   Hugging Face account and click through to agree/request access. Then create a
+   read-scoped token at https://huggingface.co/settings/tokens and run
+   `huggingface-cli login` locally with it — a plain download otherwise fails with
+   `401 GatedRepoError` (see "Why no model ships out of the box" above).
+2. `pip install -r tools/requirements.txt`
+3. `python tools/convert_model.py --output app/src/main/assets/models/ai-image-detector.onnx`
    — read that script's docstring first; it explains the verification steps you
    must do by hand (input/output names, label order) before trusting the export.
-3. Run `python tools/evaluate.py --model app/src/main/assets/models/ai-image-detector.onnx --dataset <labeled dataset>`
+4. Run `python tools/evaluate.py --model app/src/main/assets/models/ai-image-detector.onnx --dataset <labeled dataset>`
    and sanity-check accuracy/precision/recall before shipping.
-4. Rebuild the app. `SettingsScreen` and `AIImageClassifierProvider` will
+5. Rebuild the app. `SettingsScreen` and `AIImageClassifierProvider` will
    automatically detect the bundled file — no other code change is required.
-5. Never commit a model file you have not personally verified the license and
+6. Never commit a model file you have not personally verified the license and
    provenance of.
 
 ## Never download a model at runtime

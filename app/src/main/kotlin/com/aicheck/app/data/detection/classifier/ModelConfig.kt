@@ -6,13 +6,14 @@ package com.aicheck.app.data.detection.classifier
  * docs/MODEL.md — this object only holds the numbers the code needs, sourced from
  * that same doc, so there is exactly one place to update if the model changes.
  *
- * IMPORTANT: [INPUT_NAME] and the two-class assumption in [interpretOutput] are
- * this project's best-documented expectation for the target model (see docs/MODEL.md
- * "Adding the model file"), not something verified against the actual exported
- * `model.onnx` in this build (none is bundled — see [ModelAssets]). Before trusting
- * scores from a newly added model file, inspect its real input/output names (e.g.
- * with Netron) and its `config.json` id2label mapping, and update this object to
- * match.
+ * The class order in [interpretOutput] is confirmed (not guessed) from the real
+ * `Dafilab/ai-image-detector` config.json on Hugging Face: `label_mapping` is
+ * `{"0": "ai", "1": "human"}`, i.e. output index 0 = P(ai), index 1 = P(human) —
+ * the reverse of an earlier, unverified assumption in this file. [INPUT_NAME] is
+ * still this project's best-documented expectation for the exported ONNX graph
+ * (see docs/MODEL.md "Adding the model file"), not verified against the actual
+ * export in this build (none is bundled — see [ModelAssets]); confirm it with
+ * Netron once a real `.onnx` file exists.
  */
 object ModelConfig {
     const val DISPLAY_NAME = "Dafilab/ai-image-detector (EfficientNet-B4, ONNX export)"
@@ -37,18 +38,19 @@ object ModelConfig {
 
     /**
      * Interprets the raw ONNX output as a single AI-probability float in [0,1].
-     * Expects a 2-class `[1, 2]` softmax-style output ordered `[human, ai]` — this
-     * ordering must be confirmed against the real model's `config.json` `id2label`
-     * before shipping; a mismatched label order silently inverts every result.
+     * Expects a 2-class `[1, 2]` softmax-style output ordered `[ai, human]`, per the
+     * real model's config.json `label_mapping` (`{"0": "ai", "1": "human"}`) — still
+     * worth re-confirming against the actual exported graph's output with Netron,
+     * since a mismatched label order silently inverts every result.
      */
     fun interpretOutput(rawOutput: Any?): Float {
         val flat = flatten(rawOutput)
         return when (flat.size) {
             2 -> {
-                // Softmax-style two-class output [human, ai]; normalize defensively
+                // Softmax-style two-class output [ai, human]; normalize defensively
                 // in case the export didn't already apply softmax.
-                val (human, ai) = flat[0] to flat[1]
-                val total = human + ai
+                val (ai, human) = flat[0] to flat[1]
+                val total = ai + human
                 if (total <= 0f) 0.5f else (ai / total).coerceIn(0f, 1f)
             }
             1 -> flat[0].coerceIn(0f, 1f) // single sigmoid output = P(ai)

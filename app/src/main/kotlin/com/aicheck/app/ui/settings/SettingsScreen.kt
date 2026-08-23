@@ -149,20 +149,20 @@ private fun OverlaySection() {
                 if (!checked) {
                     context.stopService(Intent(context, OverlayCaptureService::class.java))
                     overlayEnabled = false
-                    return@onCheckedChange
-                }
-                when {
-                    !OverlayPermissions.canDrawOverlays(context) -> {
-                        permissionNotice = R.string.settings_overlay_permission_overlay
-                        systemSettingsLauncher.launch(OverlayPermissions.overlayPermissionIntent(context))
-                    }
-                    !OverlayPermissions.hasUsageAccess(context) -> {
-                        permissionNotice = R.string.settings_overlay_permission_usage
-                        systemSettingsLauncher.launch(OverlayPermissions.usageAccessSettingsIntent())
-                    }
-                    else -> {
-                        permissionNotice = null
-                        projectionLauncher.launch(projectionManager.createScreenCaptureIntent())
+                } else {
+                    when {
+                        !OverlayPermissions.canDrawOverlays(context) -> {
+                            permissionNotice = R.string.settings_overlay_permission_overlay
+                            systemSettingsLauncher.launch(OverlayPermissions.overlayPermissionIntent(context))
+                        }
+                        !OverlayPermissions.hasUsageAccess(context) -> {
+                            permissionNotice = R.string.settings_overlay_permission_usage
+                            systemSettingsLauncher.launch(OverlayPermissions.usageAccessSettingsIntent())
+                        }
+                        else -> {
+                            permissionNotice = null
+                            projectionLauncher.launch(projectionManager.createScreenCaptureIntent())
+                        }
                     }
                 }
             },

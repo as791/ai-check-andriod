@@ -3,15 +3,14 @@
 
 This project targets `Dafilab/ai-image-detector` on Hugging Face (Apache-2.0,
 EfficientNet-B4 via timm) as documented in docs/MODEL.md — see that file first for
-why this model was chosen and its known limitations. This script was NOT run as
-part of building this repository: the sandbox this project was built in has no
-network access to huggingface.co and no torch/timm/onnx installed (see README
-"Known limitations"). Treat it as a precise, tested-by-reading starting point, not
-a script whose output has been verified — run it yourself, then verify the result
-with `tools/evaluate.py` before trusting it in the app.
+why this model was chosen and its known limitations, including that the repo is
+gated (you must request/accept access and `huggingface-cli login` before this
+script's download will succeed — a plain 401 GatedRepoError otherwise).
 
 Steps this script performs:
-  1. Download the model + weights from Hugging Face via `timm`/`transformers`.
+  1. Download `pytorch_model.pth` (a raw PyTorch training checkpoint, not a
+     timm-hub-formatted repo — confirmed by actually running this against the
+     real repo) and load its weights into a bare `efficientnet_b4` architecture.
   2. Export to ONNX with a fixed input size.
   3. Run a smoke inference on a synthetic input to sanity-check the export.
 
@@ -20,10 +19,9 @@ You still MUST, by hand, after running this:
     https://netron.app) and update INPUT_NAME in
     app/src/main/kotlin/com/aicheck/app/data/detection/classifier/ModelConfig.kt
     if it differs from "pixel_values".
-  - Confirm the output label order (`id2label` in the model's config.json) matches
-    ModelConfig.interpretOutput's `[human, ai]` assumption. If it's reversed, either
-    fix interpretOutput or flip the output before shipping — a silent mismatch
-    inverts every result.
+  - Confirm the output label order still matches ModelConfig.interpretOutput's
+    `[ai, human]` assumption (confirmed from this repo's config.json
+    `label_mapping`; re-check if you point this script at a different model).
   - Run tools/evaluate.py against a labeled dataset and sanity-check the numbers
     before shipping.
   - Confirm you accept the model's license (Apache-2.0) and are comfortable with
@@ -31,6 +29,7 @@ You still MUST, by hand, after running this:
 
 Usage:
     pip install -r tools/requirements.txt
+    huggingface-cli login   # after requesting access on the model page — see docs/MODEL.md
     python tools/convert_model.py --output app/src/main/assets/models/ai-image-detector.onnx
 """
 
@@ -41,12 +40,46 @@ import sys
 from pathlib import Path
 
 MODEL_ID = "Dafilab/ai-image-detector"
+CHECKPOINT_FILENAME = "pytorch_model.pth"
 INPUT_SIZE = 380
+
+
+def _load_state_dict(checkpoint_path: Path) -> dict:
+    """Unwrap whatever was actually pickled into pytorch_model.pth.
+
+    Training-loop checkpoints (this one was renamed from
+    model_epoch_8_acc_0.9859.pth, a telltale training-script naming pattern) are
+    saved in several common shapes: a bare state_dict, a dict wrapping it under a
+    "state_dict"/"model_state_dict" key alongside optimizer/epoch metadata, or
+    occasionally the full nn.Module itself. Handle all three rather than guessing
+    one and failing opaquely on the others.
+    """
+    import torch
+
+    # weights_only=False: this checkpoint is a full pickle (possibly containing
+    # optimizer state or the module object itself, not just tensors), so PyTorch's
+    # safer weights_only loader would reject it. Only pass a checkpoint here from a
+    # repo whose contents you've deliberately chosen to trust, as documented in
+    # docs/MODEL.md.
+    raw = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+
+    if isinstance(raw, dict):
+        for key in ("state_dict", "model_state_dict"):
+            if key in raw:
+                raw = raw[key]
+                break
+    else:
+        raw = raw.state_dict()
+
+    # Strip a "module." prefix left over from DataParallel/DistributedDataParallel
+    # training, if present — otherwise every key mismatches the bare model's.
+    return {k.removeprefix("module."): v for k, v in raw.items()}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model-id", default=MODEL_ID, help="Hugging Face model repo id")
+    parser.add_argument("--checkpoint-filename", default=CHECKPOINT_FILENAME, help="Checkpoint file within the repo")
     parser.add_argument("--output", type=Path, required=True, help="Output .onnx path")
     parser.add_argument("--opset", type=int, default=17, help="ONNX opset version")
     args = parser.parse_args()
@@ -57,20 +90,26 @@ def main() -> None:
         import timm
     except ImportError:
         print(
-            "Missing dependencies. Run: pip install -r tools/requirements.txt "
-            "huggingface_hub",
+            "Missing dependencies. Run: pip install -r tools/requirements.txt",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    print(f"Loading {args.model_id} via timm ...")
-    # Dafilab/ai-image-detector publishes a timm-compatible EfficientNet-B4
-    # checkpoint. If timm.create_model can't resolve it directly by hub id in your
-    # timm version, download the checkpoint file with hf_hub_download and load it
-    # with timm.create_model("efficientnet_b4", pretrained=False, num_classes=2)
-    # followed by model.load_state_dict(...) — check the model card on Hugging Face
-    # for the exact checkpoint filename and any wrapper code it documents.
-    model = timm.create_model(f"hf_hub:{args.model_id}", pretrained=True)
+    print(f"Downloading {args.checkpoint_filename} from {args.model_id} ...")
+    checkpoint_path = Path(hf_hub_download(repo_id=args.model_id, filename=args.checkpoint_filename))
+
+    print("Building bare efficientnet_b4 (num_classes=2) and loading its weights ...")
+    model = timm.create_model("efficientnet_b4", pretrained=False, num_classes=2)
+    state_dict = _load_state_dict(checkpoint_path)
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    if missing or unexpected:
+        print(f"WARNING: missing keys={missing}")
+        print(f"WARNING: unexpected keys={unexpected}")
+        print(
+            "A non-empty list above means the checkpoint didn't fully match the "
+            "efficientnet_b4 architecture - inspect these before trusting the "
+            "export, since a partial load can silently produce garbage predictions."
+        )
     model.eval()
 
     args.output.parent.mkdir(parents=True, exist_ok=True)

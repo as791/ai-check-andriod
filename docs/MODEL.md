@@ -22,9 +22,14 @@ though the model itself is public and Apache-2.0 licensed. You must be logged in
 *and* have clicked through the access request on the model page before downloading
 works (see step 1 in "Adding the model file"). Its `config.json` is also not in
 `timm`'s hub-config format (`timm.create_model("hf_hub:...")` fails with
-`KeyError: 'architecture'`), so the loading code has to build the bare
-`efficientnet_b4` architecture and load the checkpoint's weights separately rather
-than relying on `timm`'s hub auto-loading — see `tools/convert_model.py`.
+`KeyError: 'architecture'`) — the repo instead publishes a raw training checkpoint,
+`pytorch_model.pth` (71MB, renamed at some point from `model_epoch_8_acc_0.9859.pth`
+— that "acc_0.9859" is the model author's own training/validation accuracy, not an
+independently verified number; still worth running `tools/evaluate.py` yourself).
+`tools/convert_model.py` downloads that checkpoint directly, builds a bare
+`efficientnet_b4` architecture, and loads the checkpoint's weights into it, handling
+the couple of common checkpoint-dict shapes a training script might have saved
+(bare state dict, or wrapped under a `state_dict`/`model_state_dict` key).
 
 ## The target model
 

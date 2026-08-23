@@ -18,7 +18,9 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.DisplayMetrics
 import android.view.Gravity
 import android.view.MotionEvent
@@ -74,6 +76,7 @@ class OverlayCaptureService : Service() {
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
+    private var projectionCallback: MediaProjection.Callback? = null
 
     private var screenWidth = 0
     private var screenHeight = 0
@@ -146,6 +149,20 @@ class OverlayCaptureService : Service() {
         val projection = projectionManager.getMediaProjection(resultCode, data)
         mediaProjection = projection
 
+        // Required since Android 14 (API 34): createVirtualDisplay() throws
+        // IllegalStateException if no callback is registered first. onStop fires
+        // when the user revokes capture from the system's "stop sharing" control,
+        // not just when we call stop() ourselves - without handling it here, every
+        // capture attempt after a system-initiated revoke would crash instead of
+        // failing gracefully.
+        val callback = object : MediaProjection.Callback() {
+            override fun onStop() {
+                stopSelf()
+            }
+        }
+        projectionCallback = callback
+        projection.registerCallback(callback, Handler(Looper.getMainLooper()))
+
         val reader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
         imageReader = reader
 
@@ -166,6 +183,8 @@ class OverlayCaptureService : Service() {
         virtualDisplay = null
         imageReader?.close()
         imageReader = null
+        projectionCallback?.let { mediaProjection?.unregisterCallback(it) }
+        projectionCallback = null
         mediaProjection?.stop()
         mediaProjection = null
     }

@@ -63,6 +63,17 @@
     <string name="settings_version">Version %1$s</string>
     <string name="settings_licenses">Open-source licenses</string>
 
+    <!-- Experimental screen overlay -->
+    <string name="settings_experimental_heading">Experimental</string>
+    <string name="settings_overlay_body">A floating bubble you can tap while inside another app (e.g. Instagram, WhatsApp) to check whatever is currently on screen — including content those apps only let you forward internally, which no share button can reach. This works by capturing the screen (not by reading the other app\'s content or automatically analyzing everything you scroll past), analyzes only when you tap, and is off by default. See docs/PRIVACY.md for exactly what this does.</string>
+    <string name="settings_overlay_enable">Enable overlay bubble</string>
+    <string name="settings_overlay_permission_overlay">Grant \"draw over other apps\" permission first, then turn this back on.</string>
+    <string name="settings_overlay_permission_usage">Grant \"usage access\" permission first (so the bubble knows when Instagram/WhatsApp is open), then turn this back on.</string>
+    <string name="overlay_notification_channel">AI Check overlay</string>
+    <string name="overlay_notification_title">AI Check overlay is active</string>
+    <string name="overlay_notification_body">Tap the floating bubble over Instagram or WhatsApp to check what\'s on screen.</string>
+    <string name="overlay_notification_stop">Stop</string>
+
     <!-- Content descriptions -->
     <string name="cd_image_preview">Selected image preview</string>
     <string name="cd_history_thumbnail">Thumbnail of a previous analysis</string>

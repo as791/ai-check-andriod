@@ -95,6 +95,19 @@ then averaging the scores — this is frame-sampled still-image classification,
 not motion/temporal or audio analysis, and every video result says so
 explicitly. See `docs/ARCHITECTURE.md` "Video (Reels/Shorts)".
 
+**Screen overlay (experimental, off by default):** a floating bubble, enabled from
+Settings -> Experimental, that lets you check whatever is currently on screen
+inside Instagram or WhatsApp — including content those apps only let you forward
+internally, which no share-sheet integration can reach. It captures a single
+on-screen frame via Android's `MediaProjection` API (the same sanctioned
+mechanism screen recorders use) only when you tap the bubble, never
+continuously, and never reads the other app's actual content. See
+`docs/ARCHITECTURE.md` "Screen overlay (experimental)" and `docs/PRIVACY.md`
+"Screen overlay" for the full design and exactly what it does and does not
+access. This is the least-tested part of the app — see
+[docs/PLAY_STORE_CHECKLIST.md](docs/PLAY_STORE_CHECKLIST.md) for the device
+testing it still needs before any release.
+
 ## Build
 
 Requires JDK 17+ and an Android SDK (via Android Studio, or `sdkmanager`) with
@@ -195,6 +208,7 @@ an in-app licenses screen before a store submission — see
 ## Roadmap
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for what's intentionally out of scope for
-this MVP (iOS, video/deepfake detection, cloud analysis, and — explicitly — any
-Accessibility-Service-based social-feed overlay, which was considered and
-rejected for the reasons documented there).
+this MVP (iOS, real video-native/temporal analysis, cloud analysis) and for the
+screen-overlay feature's own scope notes (implemented, opt-in, tap-to-capture
+only — no Accessibility Service anywhere in this codebase, and no continuous/
+automatic background analysis).

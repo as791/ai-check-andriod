@@ -22,16 +22,19 @@ import com.aicheck.app.ui.theme.AiCheckTheme
 /**
  * Single-Activity host. Handles entry points into the same nav graph: normal
  * launch (Home), a share-sheet ACTION_SEND/ACTION_SEND_MULTIPLE of an image or
- * video, and ACTION_VIEW (e.g. "Open with" from a file manager).
- * launchMode="singleTask" means a share while the app is already running arrives
- * via [onNewIntent] rather than a new instance.
+ * video, ACTION_VIEW (e.g. "Open with" from a file manager), and a direct
+ * "open this saved analysis" request (from the experimental overlay bubble —
+ * see [Routes.EXTRA_OPEN_ANALYSIS_ID]). launchMode="singleTask" means a share
+ * while the app is already running arrives via [onNewIntent] rather than a new
+ * instance.
  */
 class MainActivity : ComponentActivity() {
     private val pendingSharedMedia = mutableStateOf<SharedMedia?>(null)
+    private val pendingResultId = mutableStateOf<Long?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        pendingSharedMedia.value = ShareIntentParser.extractSharedMedia(intent)
+        handleIntent(intent)
 
         setContent {
             AiCheckTheme {
@@ -47,6 +50,14 @@ class MainActivity : ComponentActivity() {
                             pendingSharedMedia.value = null
                         }
                     }
+
+                    val resultId by pendingResultId
+                    LaunchedEffect(resultId) {
+                        resultId?.let {
+                            navController.navigate(Routes.result(it))
+                            pendingResultId.value = null
+                        }
+                    }
                 }
             }
         }
@@ -55,6 +66,15 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        pendingSharedMedia.value = ShareIntentParser.extractSharedMedia(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent) {
+        val openAnalysisId = intent.getLongExtra(Routes.EXTRA_OPEN_ANALYSIS_ID, -1L)
+        if (openAnalysisId >= 0) {
+            pendingResultId.value = openAnalysisId
+        } else {
+            pendingSharedMedia.value = ShareIntentParser.extractSharedMedia(intent)
+        }
     }
 }

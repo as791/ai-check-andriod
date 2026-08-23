@@ -1,11 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!--
-      No storage/camera/network permissions are requested. Images arrive via
-      content:// URIs (share sheet / Photo Picker), which grant temporary,
-      scoped read access without any permission of ours. See docs/PRIVACY.md.
+      No storage/camera/network permissions are requested for the normal
+      share-to-check flow. Images arrive via content:// URIs (share sheet /
+      Photo Picker), which grant temporary, scoped read access without any
+      permission of ours. See docs/PRIVACY.md.
+
+      The four permissions below back ONE feature only: the opt-in, off-by-default
+      "Screen Overlay" experiment (Settings -> Experimental) that lets a floating
+      bubble capture and analyze whatever is currently on screen — e.g. inside
+      Instagram/WhatsApp, which no share-sheet or intent-filter can reach. See
+      docs/ARCHITECTURE.md "Screen overlay (experimental)" and docs/PRIVACY.md for
+      exactly what this does and does not do, and why it is not enabled by default.
     -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <application
         android:name=".AiCheckApplication"
@@ -68,6 +82,17 @@
                 <data android:scheme="file" android:mimeType="image/*" />
             </intent-filter>
         </activity>
+
+        <!--
+          Experimental screen-overlay capture (see comment above the permissions
+          block). Only ever started explicitly from Settings when the user turns
+          the experiment on, and only after MediaProjection consent is granted for
+          that session — never started at boot or in the background otherwise.
+        -->
+        <service
+            android:name=".overlay.OverlayCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
 
         <!-- Grants temporary read access to the generated shareable result-card PNG. -->
         <provider

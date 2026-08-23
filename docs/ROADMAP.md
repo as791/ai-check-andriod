@@ -49,15 +49,30 @@ version — see docs/ARCHITECTURE.md.
 - A browser extension.
 - A public API.
 
-## Experimental — explicitly not planned for MVP
+## Experimental — screen overlay (implemented, opt-in, off by default)
 
-Android screen/overlay integration for social-media feeds (e.g. an in-feed AI
-badge on Instagram/X). **Not implemented, and not started**, because it would
-require Accessibility Service access to read another app's screen content, which
-raises real policy (Play Store Accessibility API misuse review), privacy (reading
-another app's UI), battery, and cross-app compatibility concerns disproportionate
-to an MVP. If ever pursued, it needs its own dedicated design and review — not an
-incremental add to this codebase.
+Unlike the rest of V1, this one *is* implemented, specifically to reach content
+Instagram/WhatsApp only let you forward internally (never through Android's share
+sheet) and to let you check a Reel/photo while scrolling. See
+`docs/ARCHITECTURE.md` "Screen overlay (experimental)" and `docs/PRIVACY.md`
+"Screen overlay" for the full design and exactly what it does and does not access.
+
+In short: a draggable bubble, shown only while Instagram/WhatsApp is in front
+(detected via `UsageStatsManager` package-name polling, not Accessibility
+Service), that captures a single on-screen frame via `MediaProjection` — the same
+sanctioned mechanism screen recorders use — only when tapped, and runs it through
+the same on-device pipeline as any other check. Never continuous/automatic
+analysis, never a read of the other app's actual content, and always carries a
+mandatory persistent notification while active. This was a deliberate, informed
+scope decision (not a silent addition) given real Play Store policy and privacy
+tradeoffs — see `docs/PLAY_STORE_CHECKLIST.md` before any store submission with
+this feature enabled.
+
+Not yet done for this feature: an interval-based "auto-capture" mode was
+considered and intentionally left out of this version — the toggle does not exist
+in Settings, only tap-to-capture. If added later, it needs its own privacy-review
+pass (continuous analysis is a materially different consent model than "analyze
+once because I tapped a button").
 
 ## Monetization (structure exists, not implemented)
 

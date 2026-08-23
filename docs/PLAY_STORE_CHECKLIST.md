@@ -29,6 +29,17 @@ actual store listing.
 - [ ] Verify the share-sheet entry actually appears and works from Instagram, X,
       Reddit, WhatsApp, and a browser/Gallery specifically — share-sheet behavior
       can vary by source app.
+- [ ] The experimental screen-overlay feature (Settings -> Experimental) is the
+      least-tested part of this codebase — no emulator/device was available during
+      its development. Before shipping with it enabled: smoke-test the full
+      permission chain (overlay draw, usage access, MediaProjection consent) on a
+      real device across at least one Samsung/One UI and one stock-Android device,
+      verify the bubble shows/hides correctly over Instagram and WhatsApp, and
+      verify the foreground-service notification and Stop action behave correctly
+      across an OS version range (MediaProjection/foreground-service behavior is
+      notoriously OS-version-specific). Consider shipping V1's store listing with
+      this feature left off by default and disclosed as beta, or excluded from the
+      first release entirely if the testing above turns up device-specific issues.
 
 ## Store listing content
 
@@ -55,8 +66,17 @@ actual store listing.
       Runtime's JNI bridge needs (see `app/proguard-rules.pro`; re-test a release
       build specifically, since debug builds skip minification).
 - [ ] Accessibility Service policy: this app does not use Accessibility Service
-      (see `docs/ROADMAP.md` "Experimental") — nothing to declare here, but keep it
-      that way unless a full policy review accompanies that feature.
+      anywhere, including in the screen-overlay feature (see
+      `docs/ARCHITECTURE.md` "Screen overlay (experimental)" for why
+      MediaProjection was used instead) — nothing to declare here, but keep it
+      that way unless a full policy review accompanies a design change.
+- [ ] Foreground service + MediaProjection + SYSTEM_ALERT_WINDOW disclosure:
+      Play Console's declaration form asks why each sensitive permission is used —
+      answer specifically that `SYSTEM_ALERT_WINDOW` and
+      `FOREGROUND_SERVICE_MEDIA_PROJECTION` back the opt-in overlay bubble only,
+      per `docs/PRIVACY.md` "Screen overlay". This is a permission set Play review
+      scrutinizes closely; do not submit without this feature's privacy
+      documentation being genuinely accurate to what the code does.
 - [ ] Confirm the final `applicationId` (`com.aicheck.app`) is the one you intend
       to publish under — it cannot be changed after the first release.
 - [ ] Review all third-party licenses actually bundled in the shipped APK

@@ -56,6 +56,44 @@ persistent logs. Standard Android crash/ANR reporting (if a developer enables on
 in a future build) is out of scope for this document and must be disclosed
 separately if added — see `docs/ROADMAP.md` for what is *not* in this build.
 
+## Screen overlay (experimental, off by default)
+
+Settings -> Experimental -> "Enable overlay bubble" is a separate, opt-in feature
+covered by its own privacy rules, since it works differently from the rest of the
+app. See `docs/ARCHITECTURE.md` "Screen overlay (experimental)" for the technical
+design; this section is what it means for your data specifically.
+
+- **Off unless you turn it on.** Nothing here runs, and none of the permissions
+  below are requested, unless you explicitly enable it in Settings.
+- **What it can see:** while active, and only while Instagram or WhatsApp is the
+  app currently in front, a small floating bubble appears. Tapping it captures a
+  single screenshot-equivalent frame of whatever is on screen *at that moment* —
+  the same class of access a screen-recording app uses — and runs it through the
+  same on-device analysis as any other check in this app. It does not capture
+  anything before or after that single tap, and does not capture anything while
+  the bubble is hidden (i.e. while some other app is in front).
+  Android requires you to grant this via a system "screen capture" consent dialog
+  every time the overlay service is (re)started; this is not something the app can
+  request silently, and the consent does not persist across a service restart.
+- **What it does not see:** it never reads Instagram/WhatsApp's own data, network
+  traffic, message content, or accessibility tree — it has no access to those at
+  all. The two special permissions it requests are `SYSTEM_ALERT_WINDOW` (needed
+  to draw the floating bubble) and usage access (needed only to know *which app
+  package* is currently in front, so the bubble can hide itself everywhere except
+  Instagram/WhatsApp — this reveals a package name only, never any content).
+- **What happens to a captured frame:** it is written to the app's private cache,
+  analyzed on-device exactly like a shared image, and then handled the same way as
+  any other analysis — a thumbnail + result are kept in local history, the
+  full-frame capture itself is deleted once analysis completes.
+- **Foreground notification:** while the overlay is active, Android requires a
+  persistent, visible notification ("AI Check overlay is active") with a Stop
+  action — this cannot be hidden or suppressed, by design, so you always know the
+  feature is running.
+- **Turning it off:** flipping the Settings switch off, or tapping "Stop" on the
+  notification, immediately stops the foreground service, removes the bubble, and
+  releases the screen-capture session. Nothing continues running in the
+  background afterward.
+
 ## If C2PA support is added later
 
 Per `docs/ARCHITECTURE.md`'s "C2PA integration path", reading a Content

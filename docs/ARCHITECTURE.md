@@ -190,6 +190,86 @@ To enable it in a future version:
 No other file needs to change — `EvidenceEngine`'s verified-provenance branch and
 its tests already exist for this.
 
+## Screen overlay (experimental)
+
+Off by default, opt-in only, toggled from Settings -> Experimental. Exists to reach
+two cases nothing else in this app can: content Instagram/WhatsApp only let you
+forward *within* the app itself (never through Android's share sheet, so
+`ShareIntentParser` never sees it), and checking a Reel/photo while scrolling
+without manually sharing each one out.
+
+```
+Settings toggle
+   |  (chained permission requests, one system dialog at a time)
+   v
+1. Settings.canDrawOverlays()          -- "draw over other apps"
+2. AppOpsManager usage-access check    -- "usage access"
+3. MediaProjectionManager consent      -- one-time per service start
+   |
+   v
+OverlayCaptureService (foreground service, type=mediaProjection)
+   |
+   +-- ForegroundAppWatcher: polls UsageStatsManager every 1.5s for the
+   |   current foreground package; bubble is shown only over
+   |   TARGET_PACKAGES (Instagram, WhatsApp) and hidden everywhere else
+   |
+   +-- BubbleView: a draggable floating window (plain View/Canvas, not
+       Compose -- see its class doc for why). Tap it:
+          |
+          v
+       captureFrame() -- grabs the current frame from the MediaProjection's
+       ImageReader (the *rendered pixels* of whatever is on screen),
+       encodes to JPEG in cacheDir
+          |
+          v
+       AnalyzeImageUseCase.run() -- the exact same pipeline as a normal
+       share-in check (classifier + metadata + provenance signals)
+          |
+          v
+       bubble shows the resulting AI-likelihood percentage; tapping again
+       opens the full Result screen (MainActivity via
+       Routes.EXTRA_OPEN_ANALYSIS_ID)
+```
+
+### Why MediaProjection, not Accessibility Service
+
+The obvious alternative — Accessibility Service — was deliberately rejected, even
+though it's the more common approach for "overlay on top of another app" tools.
+Accessibility Service would let (and would be flagged by Play Store review as
+being able to) read Instagram/WhatsApp's actual view hierarchy and text content,
+which is exactly the kind of automated in-app content scraping this project's own
+constraints rule out. MediaProjection instead captures *rendered pixels only* —
+the same class of access screen recorders and screenshot tools use, sanctioned by
+Google for this purpose, requiring an explicit, per-session, revocable user
+consent dialog every time (Android will not let this be silently
+re-granted). `ForegroundAppWatcher` uses `UsageStatsManager`, not Accessibility
+Service either — it only ever learns a foreground package *name*, never any
+content within it.
+
+### Why tap-to-capture, not continuous analysis
+
+The bubble analyzes only on an explicit tap. Continuously analyzing every frame
+while scrolling was considered and rejected for V1: it would run the classifier
+several times a second indefinitely, with real battery cost, and would mean the
+app is analyzing content the user never asked it to look at — a materially
+different privacy posture than "capture what's on screen right now, once, because
+I tapped a button." Tap-to-capture keeps the same consent-per-action model as
+the rest of the app (you always initiate an analysis).
+
+### What this does not do
+
+- Does not read Instagram/WhatsApp's UI, database, or network traffic — only a
+  screen-pixel capture, on tap, of whatever is currently rendered.
+- Does not run unless explicitly turned on in Settings, and stops the moment the
+  toggle is turned off or the persistent notification's "Stop" action is tapped —
+  a foreground-service notification is mandatory and always visible while active
+  (Android requirement, not a choice this app makes).
+- Does not persist the captured screen frame beyond the single analysis it was
+  captured for (deleted after; see `docs/PRIVACY.md`).
+- Is not published to any Play Store listing claim as a "silent" or "background"
+  feature — see `docs/PLAY_STORE_CHECKLIST.md` for the disclosure this requires
+  before any store submission.
+
 ## Why no DI framework
 
 The object graph (`AppContainer`) is small, static for the process lifetime, and

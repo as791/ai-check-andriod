@@ -74,8 +74,6 @@ class OverlayCaptureService : Service() {
     private var lastAnalysisId: Long? = null
 
     private var mediaProjection: MediaProjection? = null
-    private var virtualDisplay: VirtualDisplay? = null
-    private var imageReader: ImageReader? = null
     private var projectionCallback: MediaProjection.Callback? = null
 
     private var screenWidth = 0
@@ -136,6 +134,15 @@ class OverlayCaptureService : Service() {
     }
 
     // --- MediaProjection setup ---
+    //
+    // The MediaProjection consent (below) is obtained once and held for the whole
+    // service lifetime, but the VirtualDisplay/ImageReader it feeds are deliberately
+    // NOT: opening a VirtualDisplay makes the system continuously composite/mirror
+    // the screen into it, which costs real GPU work and battery even while nothing
+    // is being read from it. That mirror is only opened for the ~1 second a single
+    // capture takes (see openCaptureSurface/closeCaptureSurface, used from
+    // captureFrame), then torn down immediately - so the overlay's idle cost is just
+    // the lightweight UsageStatsManager polling in ForegroundAppWatcher.
 
     private fun startProjection(resultCode: Int, data: Intent) {
         val metrics = DisplayMetrics()
@@ -162,11 +169,18 @@ class OverlayCaptureService : Service() {
         }
         projectionCallback = callback
         projection.registerCallback(callback, Handler(Looper.getMainLooper()))
+    }
 
+    private fun stopProjection() {
+        projectionCallback?.let { mediaProjection?.unregisterCallback(it) }
+        projectionCallback = null
+        mediaProjection?.stop()
+        mediaProjection = null
+    }
+
+    private fun openCaptureSurface(projection: MediaProjection): Pair<ImageReader, VirtualDisplay> {
         val reader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
-        imageReader = reader
-
-        virtualDisplay = projection.createVirtualDisplay(
+        val display = projection.createVirtualDisplay(
             "AiCheckOverlayCapture",
             screenWidth,
             screenHeight,
@@ -176,17 +190,12 @@ class OverlayCaptureService : Service() {
             null,
             null,
         )
+        return reader to display
     }
 
-    private fun stopProjection() {
-        virtualDisplay?.release()
-        virtualDisplay = null
-        imageReader?.close()
-        imageReader = null
-        projectionCallback?.let { mediaProjection?.unregisterCallback(it) }
-        projectionCallback = null
-        mediaProjection?.stop()
-        mediaProjection = null
+    private fun closeCaptureSurface(reader: ImageReader, display: VirtualDisplay) {
+        display.release()
+        reader.close()
     }
 
     // --- Bubble window ---
@@ -269,12 +278,12 @@ class OverlayCaptureService : Service() {
         }
         if (analysisJob?.isActive == true) return
 
-        val reader = imageReader ?: return
+        val projection = mediaProjection ?: return
         bubble.state = BubbleState.ANALYZING
         bubble.startAnalyzingAnimation()
 
         analysisJob = serviceScope.launch {
-            val capturedFile = runCatching { captureFrame(reader) }.getOrNull()
+            val capturedFile = runCatching { captureFrame(projection) }.getOrNull()
             if (capturedFile == null) {
                 showTransientError(bubble)
                 return@launch
@@ -315,40 +324,45 @@ class OverlayCaptureService : Service() {
         if (bubble.state == BubbleState.ERROR) bubble.state = BubbleState.IDLE
     }
 
-    private suspend fun captureFrame(reader: ImageReader): File? = withContext(Dispatchers.IO) {
-        // A freshly (re)started VirtualDisplay needs a frame or two to start
-        // producing images; briefly poll rather than failing on the first miss.
-        var image: Image? = null
-        for (attempt in 0 until FRAME_POLL_ATTEMPTS) {
-            image = reader.acquireLatestImage()
-            if (image != null) break
-            Thread.sleep(FRAME_POLL_DELAY_MS)
-        }
-        val img = image ?: return@withContext null
-
+    private suspend fun captureFrame(projection: MediaProjection): File? = withContext(Dispatchers.IO) {
+        val (reader, display) = openCaptureSurface(projection)
         try {
-            val plane = img.planes[0]
-            val buffer: ByteBuffer = plane.buffer
-            val pixelStride = plane.pixelStride
-            val rowStride = plane.rowStride
-            val rowPadding = rowStride - pixelStride * screenWidth
+            // A freshly opened VirtualDisplay needs a frame or two to start
+            // producing images; briefly poll rather than failing on the first miss.
+            var image: Image? = null
+            for (attempt in 0 until FRAME_POLL_ATTEMPTS) {
+                image = reader.acquireLatestImage()
+                if (image != null) break
+                Thread.sleep(FRAME_POLL_DELAY_MS)
+            }
+            val img = image ?: return@withContext null
 
-            val rawBitmap = Bitmap.createBitmap(
-                screenWidth + rowPadding / pixelStride,
-                screenHeight,
-                Bitmap.Config.ARGB_8888,
-            )
-            rawBitmap.copyPixelsFromBuffer(buffer)
-            val cropped = Bitmap.createBitmap(rawBitmap, 0, 0, screenWidth, screenHeight)
-            if (cropped !== rawBitmap) rawBitmap.recycle()
+            try {
+                val plane = img.planes[0]
+                val buffer: ByteBuffer = plane.buffer
+                val pixelStride = plane.pixelStride
+                val rowStride = plane.rowStride
+                val rowPadding = rowStride - pixelStride * screenWidth
 
-            val outDir = File(cacheDir, "shared").apply { mkdirs() }
-            val outFile = File(outDir, "overlay_capture_${System.currentTimeMillis()}.jpg")
-            FileOutputStream(outFile).use { out -> cropped.compress(Bitmap.CompressFormat.JPEG, 92, out) }
-            cropped.recycle()
-            outFile
+                val rawBitmap = Bitmap.createBitmap(
+                    screenWidth + rowPadding / pixelStride,
+                    screenHeight,
+                    Bitmap.Config.ARGB_8888,
+                )
+                rawBitmap.copyPixelsFromBuffer(buffer)
+                val cropped = Bitmap.createBitmap(rawBitmap, 0, 0, screenWidth, screenHeight)
+                if (cropped !== rawBitmap) rawBitmap.recycle()
+
+                val outDir = File(cacheDir, "shared").apply { mkdirs() }
+                val outFile = File(outDir, "overlay_capture_${System.currentTimeMillis()}.jpg")
+                FileOutputStream(outFile).use { out -> cropped.compress(Bitmap.CompressFormat.JPEG, 92, out) }
+                cropped.recycle()
+                outFile
+            } finally {
+                img.close()
+            }
         } finally {
-            img.close()
+            closeCaptureSurface(reader, display)
         }
     }
 

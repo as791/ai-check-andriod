@@ -10,20 +10,35 @@ Android only. On-device classifier (when a model is bundled — see
 `docs/MODEL.md`) + metadata inspection + honest provenance/watermark stubs. Local
 history via Room. No accounts, no backend, no payments, no ads.
 
+**Video (Reels/Shorts) is supported on a frame-sampled basis**: `AnalyzeVideoUseCase`
+extracts a handful of evenly-spaced still frames (`VideoFrameSampler`, via
+`MediaMetadataRetriever`) from a shared video and classifies each one with the
+*same* image classifier used for photos, then averages the per-frame scores
+(`VideoSignalAggregator`). This is explicitly still-image classification applied
+per frame — not motion, temporal, or audio analysis, and no video-specific model
+exists or is implied. Every video result's limitations say so. Metadata/provenance
+inspection (EXIF, generator signatures, C2PA) is not implemented for video in this
+version — see docs/ARCHITECTURE.md.
+
 ## V2
 
 - iOS.
 - An improved/ensembled classifier once real evaluation data
   (`tools/evaluate.py`) exists to justify the choice.
-- Batch image scanning (multiple images in one session).
+- Batch image/video scanning (multiple items in one session — the app currently
+  analyzes only the first item of a multi-select share).
 - Additional provenance standards beyond C2PA if relevant ones emerge.
 - Multi-model ensemble (combine more than one classifier's output, weighted by
   measured per-model reliability).
 
 ## V3
 
-- Video analysis (deepfake detection), likely via sampled-frame analysis reusing
-  the existing image pipeline per frame rather than a bespoke video model.
+- Real video-native analysis: motion/temporal consistency checks and audio
+  analysis, going beyond the frame-sampled still-image classification shipped in
+  V1 — genuine deepfake detection needs more than N independent frame scores.
+- A dedicated video/deepfake classifier model, once one meeting the same
+  license/on-device requirements as the image classifier (see docs/MODEL.md) is
+  identified and evaluated.
 
 ## V4
 

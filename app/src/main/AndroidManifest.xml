@@ -29,11 +29,27 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Share sheet entry point: "Share" -> AI Check from any app. -->
+            <!--
+              Share sheet entry point: "Share" -> AI Check from any app. Both SEND
+              and SEND_MULTIPLE are declared: several share panels (notably Samsung's
+              Gallery "Share via" sheet) dispatch SEND_MULTIPLE even for a single
+              selected item, and an app that only declares SEND simply never appears
+              for those sources. Only the first item is analyzed on a multi-select
+              share; batch analysis is future scope (see docs/ROADMAP.md).
+              video/* is accepted alongside image/* so Reels/Shorts-style video
+              shares route in too (see AnalyzeVideoUseCase).
+            -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
             </intent-filter>
 
             <!--

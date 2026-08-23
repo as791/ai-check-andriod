@@ -80,6 +80,53 @@ Adding a new detector (a better classifier, a real C2PA check, a watermark model
 means writing one new `DetectionProvider` and adding it to one of the three
 provider-group lists in `AppContainer` — nothing else changes.
 
+## Video (Reels/Shorts)
+
+Handled by a parallel pipeline, `AnalyzeVideoUseCase` (`app/data/analysis`), not
+by extending `AnalyzeImageUseCase`:
+
+```
+video Uri
+   |
+   v
+VideoFrameSampler (MediaMetadataRetriever, N evenly-spaced frames -> JPEGs)
+   |
+   v
+AIImageClassifierProvider.analyze() per frame (same provider as photos)
+   |
+   v
+VideoSignalAggregator.aggregateFrameSignals() -> one AI_CLASSIFIER DetectionSignal
+   |
+   v
+EvidenceEngine.aggregate() (same engine, same thresholds, plus explicit
+UNAVAILABLE stubs for metadata/provenance and a video-specific limitation string)
+```
+
+This reuses the *same* on-device image classifier per frame rather than a
+video-specific model — there isn't one bundled, and none is implied. It is
+explicitly frame-sampled still-image classification, not motion, temporal, or
+audio analysis; every video result's limitations say this in plain language
+(`AnalyzeVideoUseCase.videoLimitation`). `VideoSignalAggregator` is pure Kotlin
+(only depends on domain models), so the frame-averaging logic is unit-tested
+without needing a real video file or Robolectric.
+
+Metadata and provenance inspection (EXIF, generator signatures, C2PA) are not
+implemented for video in this version — rather than silently omitting those
+signal cards, `AnalyzeVideoUseCase` includes explicit `UNAVAILABLE`
+`DetectionSignal`s for them so the Result screen states the gap honestly instead
+of looking incomplete.
+
+### Share-sheet routing for image vs. video
+
+`ShareIntentParser.extractSharedMedia` resolves both `ACTION_SEND` and
+`ACTION_SEND_MULTIPLE` (some share panels — notably Samsung's Gallery "Share via"
+sheet — dispatch `SEND_MULTIPLE` even for a single selected item, so a
+SEND-only filter simply never appears as a target from those sources) to a
+`SharedMedia(uri, kind)`, where `kind` is derived from the intent's MIME type
+(`image/*` vs `video/*`). `MainActivity` passes `kind` through as a nav argument
+so `AnalyzingViewModel` can route to `AnalyzeImageUseCase` or
+`AnalyzeVideoUseCase` accordingly.
+
 ## Evidence engine
 
 `EvidenceEngine.aggregate()` has two paths:

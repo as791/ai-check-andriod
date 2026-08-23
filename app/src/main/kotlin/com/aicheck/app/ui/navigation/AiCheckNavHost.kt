@@ -18,7 +18,7 @@ fun AiCheckNavHost(navController: NavHostController = rememberNavController()) {
     NavHost(navController = navController, startDestination = Routes.HOME) {
         composable(Routes.HOME) {
             HomeScreen(
-                onImageSelected = { uri -> navController.navigate(Routes.analyzing(uri)) },
+                onImageSelected = { uri -> navController.navigate(Routes.analyzing(uri, isVideo = false)) },
                 onOpenHistory = { navController.navigate(Routes.HISTORY) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 onOpenHistoryItem = { id -> navController.navigate(Routes.result(id)) },
@@ -26,11 +26,16 @@ fun AiCheckNavHost(navController: NavHostController = rememberNavController()) {
         }
         composable(
             route = Routes.ANALYZING_PATTERN,
-            arguments = listOf(navArgument("uri") { type = NavType.StringType }),
+            arguments = listOf(
+                navArgument("uri") { type = NavType.StringType },
+                navArgument("isVideo") { type = NavType.BoolType },
+            ),
         ) { backStackEntry ->
             val encodedUri = backStackEntry.arguments?.getString("uri").orEmpty()
+            val isVideo = backStackEntry.arguments?.getBoolean("isVideo") ?: false
             AnalyzingScreen(
                 encodedUri = encodedUri,
+                isVideo = isVideo,
                 onComplete = { analysisId ->
                     navController.navigate(Routes.result(analysisId)) {
                         popUpTo(Routes.HOME) { inclusive = false }

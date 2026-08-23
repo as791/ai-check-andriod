@@ -1,9 +1,10 @@
 # AI Check
 
-A private, on-device Android app that estimates whether an image is likely
-AI-generated. Share any image into it — from Instagram, X, Reddit, WhatsApp, a
-browser, or your Gallery — and get an evidence-based likelihood estimate in
-seconds, with the reasoning behind it, never a claim of certainty.
+A private, on-device Android app that estimates whether an image — or a shared
+video like a Reel or Short — is likely AI-generated. Share it in from
+Instagram, X, Reddit, WhatsApp, a browser, or your Gallery, and get an
+evidence-based likelihood estimate in seconds, with the reasoning behind it,
+never a claim of certainty.
 
 > **This is an estimate, not proof.** AI-content detection can produce false
 > positives and false negatives. See "Known accuracy limitations" below.
@@ -88,6 +89,12 @@ transparently:
   "unavailable": no open, on-device detector exists for generative watermarks like
   SynthID as of this writing.
 
+**Video (Reels/Shorts):** shared video is handled by sampling a handful of
+evenly-spaced still frames and running the *same* image classifier on each one,
+then averaging the scores — this is frame-sampled still-image classification,
+not motion/temporal or audio analysis, and every video result says so
+explicitly. See `docs/ARCHITECTURE.md` "Video (Reels/Shorts)".
+
 ## Build
 
 Requires JDK 17+ and an Android SDK (via Android Studio, or `sdkmanager`) with
@@ -126,10 +133,11 @@ Install to a connected device/emulator:
   content-credentials override path, and the "absence of evidence isn't evidence"
   weighting behavior.
 - `app/src/test` — metadata parsing (`GeneratorSignaturesTest`,
-  `PngChunkReaderTest`), malformed-image/URI handling (`ImageLoaderTest`,
-  `ShareIntentParserTest`), and Room history persistence (`AnalysisDaoTest`,
-  `HistoryRepositoryTest`), the last two via Robolectric so they run as fast JVM
-  tests without an emulator.
+  `PngChunkReaderTest`), malformed-image/URI/share-intent handling
+  (`ImageLoaderTest`, `ShareIntentParserTest`), video frame-score averaging
+  (`VideoSignalAggregatorTest`), and Room history persistence (`AnalysisDaoTest`,
+  `HistoryRepositoryTest`) — the Android-dependent ones via Robolectric so they
+  run as fast JVM tests without an emulator.
 
 Detector *quality* (as opposed to code correctness) is evaluated separately —
 see `tools/evaluate.py` and [Known accuracy limitations](#known-accuracy-limitations).

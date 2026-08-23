@@ -2,6 +2,7 @@ package com.aicheck.app
 
 import android.content.Context
 import com.aicheck.app.data.analysis.AnalyzeImageUseCase
+import com.aicheck.app.data.analysis.AnalyzeVideoUseCase
 import com.aicheck.app.data.detection.classifier.AIImageClassifierProvider
 import com.aicheck.app.data.detection.metadata.ExifMetadataProvider
 import com.aicheck.app.data.detection.metadata.KnownGeneratorMetadataProvider
@@ -12,6 +13,7 @@ import com.aicheck.app.data.sharing.ResultCardRenderer
 import com.aicheck.app.data.storage.AnalysisDatabase
 import com.aicheck.app.data.storage.HistoryRepository
 import com.aicheck.app.data.storage.ThumbnailStore
+import com.aicheck.app.data.video.VideoFrameSampler
 import com.aicheck.domain.evidence.EvidenceEngine
 
 /**
@@ -27,6 +29,7 @@ class AppContainer(context: Context) {
     private val thumbnailStore by lazy { ThumbnailStore(appContext) }
 
     val imageLoader by lazy { ImageLoader(appContext) }
+    private val videoFrameSampler by lazy { VideoFrameSampler(appContext) }
     val historyRepository by lazy { HistoryRepository(database.analysisDao(), thumbnailStore) }
     val resultCardRenderer by lazy { ResultCardRenderer(appContext) }
 
@@ -43,6 +46,16 @@ class AppContainer(context: Context) {
             provenanceProviders = listOf(c2paProvider),
             metadataProviders = listOf(exifMetadataProvider, generatorMetadataProvider),
             visualProviders = listOf(classifierProvider, watermarkProvider),
+            evidenceEngine = evidenceEngine,
+            historyRepository = historyRepository,
+        )
+    }
+
+    val analyzeVideoUseCase by lazy {
+        AnalyzeVideoUseCase(
+            frameSampler = videoFrameSampler,
+            classifierProvider = classifierProvider,
+            watermarkProvider = watermarkProvider,
             evidenceEngine = evidenceEngine,
             historyRepository = historyRepository,
         )

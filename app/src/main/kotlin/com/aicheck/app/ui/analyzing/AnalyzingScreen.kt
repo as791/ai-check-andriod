@@ -34,13 +34,14 @@ import com.aicheck.app.data.analysis.AnalysisStage
 @Composable
 fun AnalyzingScreen(
     encodedUri: String,
+    isVideo: Boolean,
     onComplete: (Long) -> Unit,
     onCancel: () -> Unit,
     viewModel: AnalyzingViewModel = viewModel(factory = AnalyzingViewModel.Factory),
 ) {
     val state by viewModel.uiState.collectAsState()
 
-    LaunchedEffect(encodedUri) { viewModel.start(encodedUri) }
+    LaunchedEffect(encodedUri, isVideo) { viewModel.start(encodedUri, isVideo) }
     LaunchedEffect(state) {
         val success = state as? AnalyzingUiState.Success ?: return@LaunchedEffect
         onComplete(success.analysisId)
@@ -56,7 +57,7 @@ fun AnalyzingScreen(
         when (val current = state) {
             is AnalyzingUiState.Error -> ErrorContent(
                 reason = current.reason,
-                onRetry = { viewModel.retry(encodedUri) },
+                onRetry = { viewModel.retry(encodedUri, isVideo) },
                 onCancel = onCancel,
             )
             is AnalyzingUiState.InProgress -> ProgressContent(current)
@@ -97,6 +98,7 @@ private fun stageLabel(stage: AnalysisStage): Int = when (stage) {
     AnalysisStage.PROVENANCE -> R.string.analyzing_stage_provenance
     AnalysisStage.METADATA -> R.string.analyzing_stage_metadata
     AnalysisStage.VISUAL -> R.string.analyzing_stage_visual
+    AnalysisStage.SAMPLING_FRAMES -> R.string.analyzing_stage_sampling_frames
 }
 
 @Composable

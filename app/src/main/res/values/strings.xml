@@ -5,7 +5,7 @@
     <!-- Home -->
     <string name="home_title">Is this image AI-generated?</string>
     <string name="home_choose_image">Choose Image</string>
-    <string name="home_share_hint">Or share an image from another app to AI Check.</string>
+    <string name="home_share_hint">Or share an image or video (e.g. a Reel or Short) from another app to AI Check.</string>
     <string name="home_recent_checks">Recent checks</string>
     <string name="home_no_history">No checks yet. Choose an image to get started.</string>
     <string name="home_view_all_history">View all</string>
@@ -15,6 +15,7 @@
     <string name="analyzing_stage_provenance">Checking provenance</string>
     <string name="analyzing_stage_metadata">Inspecting metadata</string>
     <string name="analyzing_stage_visual">Running visual analysis</string>
+    <string name="analyzing_stage_sampling_frames">Sampling video frames</string>
 
     <!-- Result -->
     <string name="result_ai_likelihood">AI likelihood</string>

@@ -31,6 +31,13 @@ Usage:
     pip install -r tools/requirements.txt
     huggingface-cli login   # after requesting access on the model page — see docs/MODEL.md
     python tools/convert_model.py --output app/src/main/assets/models/ai-image-detector.onnx
+
+    # If hf_hub_download fails locally (e.g. a NameResolutionError on
+    # us.aws.cdn.hf.co — a known issue on some networks/DNS resolvers), download
+    # pytorch_model.pth manually from the model's "Files and versions" page in a
+    # browser instead, then point this script at it directly:
+    python tools/convert_model.py --checkpoint-path ~/Downloads/pytorch_model.pth \\
+        --output app/src/main/assets/models/ai-image-detector.onnx
 """
 
 from __future__ import annotations
@@ -80,13 +87,24 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model-id", default=MODEL_ID, help="Hugging Face model repo id")
     parser.add_argument("--checkpoint-filename", default=CHECKPOINT_FILENAME, help="Checkpoint file within the repo")
+    parser.add_argument(
+        "--checkpoint-path",
+        type=Path,
+        default=None,
+        help=(
+            "Path to an already-downloaded checkpoint file, skipping hf_hub_download "
+            "entirely. Useful if huggingface_hub's CDN download fails locally (e.g. "
+            "a NameResolutionError on us.aws.cdn.hf.co) - download the file manually "
+            "from the model's 'Files and versions' page in a browser instead, then "
+            "point this at wherever you saved it."
+        ),
+    )
     parser.add_argument("--output", type=Path, required=True, help="Output .onnx path")
     parser.add_argument("--opset", type=int, default=17, help="ONNX opset version")
     args = parser.parse_args()
 
     try:
         import torch
-        from huggingface_hub import hf_hub_download
         import timm
     except ImportError:
         print(
@@ -95,8 +113,23 @@ def main() -> None:
         )
         sys.exit(1)
 
-    print(f"Downloading {args.checkpoint_filename} from {args.model_id} ...")
-    checkpoint_path = Path(hf_hub_download(repo_id=args.model_id, filename=args.checkpoint_filename))
+    if args.checkpoint_path is not None:
+        checkpoint_path = args.checkpoint_path
+        if not checkpoint_path.is_file():
+            print(f"--checkpoint-path {checkpoint_path} does not exist.", file=sys.stderr)
+            sys.exit(1)
+        print(f"Using local checkpoint at {checkpoint_path} ...")
+    else:
+        try:
+            from huggingface_hub import hf_hub_download
+        except ImportError:
+            print(
+                "Missing dependencies. Run: pip install -r tools/requirements.txt",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(f"Downloading {args.checkpoint_filename} from {args.model_id} ...")
+        checkpoint_path = Path(hf_hub_download(repo_id=args.model_id, filename=args.checkpoint_filename))
 
     print("Building bare efficientnet_b4 (num_classes=2) and loading its weights ...")
     model = timm.create_model("efficientnet_b4", pretrained=False, num_classes=2)

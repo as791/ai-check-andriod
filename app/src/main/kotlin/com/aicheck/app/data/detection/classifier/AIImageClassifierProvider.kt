@@ -6,6 +6,7 @@ import ai.onnxruntime.OrtSession
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
 import com.aicheck.domain.model.AnalysisInput
 import com.aicheck.domain.model.DetectionSignal
 import com.aicheck.domain.model.SignalAvailability
@@ -56,6 +57,11 @@ class AIImageClassifierProvider(private val context: Context) : DetectionProvide
                 ortSession.run(mapOf(ModelConfig.INPUT_NAME to tensor)).use { results ->
                     val rawOutput = results[0].value
                     val aiProbability = ModelConfig.interpretOutput(rawOutput)
+                    // Only the two output logits and the derived probability are
+                    // logged - never image bytes, metadata, or file names (see
+                    // docs/PRIVACY.md "Logging"). This is what makes a flat-50% or
+                    // always-100% result diagnosable from logcat instead of a guess.
+                    Log.d(TAG, "Classifier raw output=${describe(rawOutput)} -> P(ai)=$aiProbability")
                     DetectionSignal(
                         type = signalType,
                         availability = SignalAvailability.AVAILABLE,
@@ -69,6 +75,7 @@ class AIImageClassifierProvider(private val context: Context) : DetectionProvide
                 }
             }
         } catch (e: Exception) {
+            Log.e(TAG, "Classifier inference failed; reporting the signal as ERROR", e)
             DetectionSignal.error(signalType, "The visual classifier failed to run on this image.")
         }
     }
@@ -79,13 +86,33 @@ class AIImageClassifierProvider(private val context: Context) : DetectionProvide
             if (sessionInitAttempted) return@withLock session
             sessionInitAttempted = true
             session = try {
-                val modelBytes = ModelAssets.openModelBytes(context) ?: return@withLock null
+                val modelBytes = ModelAssets.openModelBytes(context)
+                if (modelBytes == null) {
+                    Log.i(TAG, "No bundled classifier asset at ${ModelAssets.ASSET_PATH}; classifier unavailable")
+                    return@withLock null
+                }
                 OrtEnvironment.getEnvironment().createSession(modelBytes, OrtSession.SessionOptions())
             } catch (e: Exception) {
+                Log.e(TAG, "Failed to create the ONNX session for the bundled classifier; classifier unavailable", e)
+                null
+            } catch (e: OutOfMemoryError) {
+                // A ~70MB model is read fully into memory before ORT copies it; degrade
+                // to "unavailable" on a low-memory device rather than crashing the app.
+                Log.e(TAG, "Out of memory loading the bundled classifier; classifier unavailable", e)
                 null
             }
             session
         }
+    }
+
+    private fun describe(rawOutput: Any?): String = when (rawOutput) {
+        is Array<*> -> rawOutput.contentDeepToString()
+        is FloatArray -> rawOutput.contentToString()
+        else -> rawOutput.toString()
+    }
+
+    private companion object {
+        const val TAG = "AIImageClassifier"
     }
 
     private fun preprocess(bitmap: Bitmap): FloatBuffer {

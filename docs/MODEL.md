@@ -76,9 +76,17 @@ in sync if you change them.
 
 ### Output interpretation
 
-`ModelConfig.interpretOutput` expects either:
-- a 2-class output `[ai_probability, human_probability]` (softmax-style), or
-- a single sigmoid output = `P(ai)`.
+The ONNX export emits the classifier head's **raw logits** (the output tensor is
+named `logits`; timm's `efficientnet_b4` has no softmax layer), so
+`ModelConfig.interpretOutput` applies the softmax itself:
+- a 2-class output `[ai_logit, human_logit]` → `P(ai) = sigmoid(ai_logit - human_logit)`, or
+- a single raw logit → `P(ai) = sigmoid(logit)`.
+
+An earlier version "normalized" with `ai / (ai + human)`, which is not a softmax:
+whenever both logits were negative — an entirely ordinary output — a `total <= 0`
+guard forced exactly `0.5`, so confident predictions were displayed as a flat 50%.
+Found on-device with the real bundled model; `ModelConfigTest` now pins the exact
+failing input.
 
 **This label order is now confirmed**, not guessed: the real `config.json` on
 `Dafilab/ai-image-detector` publishes `"label_mapping": {"0": "ai", "1": "human"}`

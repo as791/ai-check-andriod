@@ -38,25 +38,31 @@ object ModelConfig {
 
     /**
      * Interprets the raw ONNX output as a single AI-probability float in [0,1].
-     * Expects a 2-class `[1, 2]` softmax-style output ordered `[ai, human]`, per the
-     * real model's config.json `label_mapping` (`{"0": "ai", "1": "human"}`) — still
-     * worth re-confirming against the actual exported graph's output with Netron,
-     * since a mismatched label order silently inverts every result.
+     *
+     * The export (tools/convert_model.py) emits the classifier head's raw *logits* —
+     * its output tensor is literally named "logits", and timm's efficientnet_b4 has no
+     * softmax layer — so the softmax is applied here. For a 2-class output that is
+     * exactly sigmoid(ai_logit - human_logit). Class order is `[ai, human]`, per the
+     * real model's config.json `label_mapping` (`{"0": "ai", "1": "human"}`).
+     *
+     * An earlier version "normalized" with `ai / (ai + human)`, which is not a
+     * softmax: whenever both logits were negative (an entirely ordinary output) its
+     * `total <= 0` guard forced exactly 0.5, so real, confident predictions showed
+     * up as a flat 50% — confirmed on-device with the real bundled model.
      */
     fun interpretOutput(rawOutput: Any?): Float {
         val flat = flatten(rawOutput)
+        if (flat.any { it.isNaN() }) return 0.5f
         return when (flat.size) {
-            2 -> {
-                // Softmax-style two-class output [ai, human]; normalize defensively
-                // in case the export didn't already apply softmax.
-                val (ai, human) = flat[0] to flat[1]
-                val total = ai + human
-                if (total <= 0f) 0.5f else (ai / total).coerceIn(0f, 1f)
-            }
-            1 -> flat[0].coerceIn(0f, 1f) // single sigmoid output = P(ai)
+            2 -> sigmoid(flat[0].toDouble() - flat[1].toDouble())
+            1 -> sigmoid(flat[0].toDouble()) // a single raw logit for P(ai)
             else -> 0.5f
         }
     }
+
+    /** Computed in Double so extreme logits saturate cleanly to 0/1 instead of overflowing. */
+    private fun sigmoid(x: Double): Float =
+        (1.0 / (1.0 + kotlin.math.exp(-x))).toFloat().coerceIn(0f, 1f)
 
     private fun flatten(value: Any?): FloatArray = when (value) {
         is FloatArray -> value

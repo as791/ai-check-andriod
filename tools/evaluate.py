@@ -77,15 +77,34 @@ def preprocess(image_path: Path) -> np.ndarray:
     return np.expand_dims(chw, axis=0).astype(np.float32)
 
 
+def _sigmoid(x: float) -> float:
+    # Written to saturate cleanly for extreme logits instead of overflowing exp().
+    if x >= 0:
+        return 1.0 / (1.0 + np.exp(-x))
+    e = np.exp(x)
+    return float(e / (1.0 + e))
+
+
 def interpret_output(raw_output: np.ndarray) -> float:
-    """Mirrors ModelConfig.interpretOutput in the Kotlin code."""
+    """Mirrors ModelConfig.interpretOutput in the Kotlin code - keep them in sync.
+
+    The export emits raw logits (output tensor "logits"; no softmax layer in the
+    graph), ordered [ai, human] per the model's config.json label_mapping
+    ({"0": "ai", "1": "human"}). P(ai) is therefore the 2-class softmax, i.e.
+    sigmoid(ai_logit - human_logit).
+
+    An earlier version of this function had the label order inverted AND used
+    ai / (ai + human) - not a softmax, and it collapsed to 0.5 whenever both logits
+    were negative - so evaluation numbers from it were meaningless.
+    """
     flat = raw_output.reshape(-1)
+    if np.isnan(flat).any():
+        return 0.5
     if flat.size == 2:
-        human, ai = float(flat[0]), float(flat[1])
-        total = human + ai
-        return ai / total if total > 0 else 0.5
+        ai, human = float(flat[0]), float(flat[1])
+        return float(_sigmoid(ai - human))
     if flat.size == 1:
-        return float(np.clip(flat[0], 0.0, 1.0))
+        return float(_sigmoid(float(flat[0])))
     return 0.5
 
 

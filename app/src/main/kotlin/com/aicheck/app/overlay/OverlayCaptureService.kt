@@ -22,6 +22,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
@@ -89,6 +90,7 @@ class OverlayCaptureService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            Log.i(TAG, "onStartCommand: ACTION_STOP received, stopping")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -96,10 +98,12 @@ class OverlayCaptureService : Service() {
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
         val data = intent?.let { IntentCompat.getParcelableExtra(it, EXTRA_RESULT_DATA, Intent::class.java) }
         if (data == null || resultCode == 0) {
+            Log.w(TAG, "onStartCommand: missing MediaProjection result data, stopping without starting")
             stopSelf()
             return START_NOT_STICKY
         }
 
+        Log.i(TAG, "onStartCommand: starting overlay (foreground service + projection + bubble)")
         ServiceCompat.startForeground(
             this,
             NOTIFICATION_ID,
@@ -114,6 +118,7 @@ class OverlayCaptureService : Service() {
     }
 
     override fun onDestroy() {
+        Log.i(TAG, "onDestroy: stopping overlay (this is the moment battery cost should end)")
         watchJob?.cancel()
         removeBubble()
         stopProjection()
@@ -128,6 +133,7 @@ class OverlayCaptureService : Service() {
         watchJob = serviceScope.launch {
             ForegroundAppWatcher(this@OverlayCaptureService).watch().collect { packageName ->
                 val shouldShow = packageName != null && packageName in ForegroundAppWatcher.TARGET_PACKAGES
+                Log.d(TAG, "foregroundPackage=$packageName shouldShowBubble=$shouldShow")
                 bubbleView?.visibility = if (shouldShow) android.view.View.VISIBLE else android.view.View.GONE
             }
         }
@@ -179,6 +185,7 @@ class OverlayCaptureService : Service() {
     }
 
     private fun openCaptureSurface(projection: MediaProjection): Pair<ImageReader, VirtualDisplay> {
+        Log.d(TAG, "openCaptureSurface at ${System.currentTimeMillis()}")
         val reader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
         val display = projection.createVirtualDisplay(
             "AiCheckOverlayCapture",
@@ -194,6 +201,7 @@ class OverlayCaptureService : Service() {
     }
 
     private fun closeCaptureSurface(reader: ImageReader, display: VirtualDisplay) {
+        Log.d(TAG, "closeCaptureSurface at ${System.currentTimeMillis()}")
         display.release()
         reader.close()
     }
@@ -413,6 +421,7 @@ class OverlayCaptureService : Service() {
         private const val RESULT_DISPLAY_MS = 6_000L
         private const val FRAME_POLL_ATTEMPTS = 10
         private const val FRAME_POLL_DELAY_MS = 80L
+        private const val TAG = "OverlayCaptureService"
 
         fun startIntent(context: Context, resultCode: Int, data: Intent): Intent =
             Intent(context, OverlayCaptureService::class.java).apply {

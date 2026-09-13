@@ -3,6 +3,7 @@ package com.aicheck.app.overlay
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -24,6 +25,12 @@ class ForegroundAppWatcher(private val context: Context) {
         while (true) {
             val current = currentForegroundPackage(usageStatsManager)
             if (current != lastEmitted) {
+                // Left in deliberately (not gated behind a debug flag): this is the
+                // one signal that can actually diagnose "bubble doesn't show over
+                // app X" reports without device access - see
+                // docs/ARCHITECTURE.md "Screen overlay (experimental)". Only ever a
+                // package name, never on-screen content (see docs/PRIVACY.md).
+                Log.d(TAG, "Foreground package changed: $lastEmitted -> $current")
                 lastEmitted = current
                 emit(current)
             }
@@ -55,5 +62,6 @@ class ForegroundAppWatcher(private val context: Context) {
     companion object {
         val TARGET_PACKAGES = setOf("com.instagram.android", "com.whatsapp", "com.whatsapp.w4b")
         private const val LOOKBACK_MS = 10_000L
+        private const val TAG = "ForegroundAppWatcher"
     }
 }

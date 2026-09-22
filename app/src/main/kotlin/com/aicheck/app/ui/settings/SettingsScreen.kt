@@ -1,6 +1,8 @@
 package com.aicheck.app.ui.settings
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
@@ -22,6 +24,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -30,6 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,8 +45,12 @@ import com.aicheck.app.BuildConfig
 import com.aicheck.app.R
 import com.aicheck.app.data.detection.classifier.ModelAssets
 import com.aicheck.app.data.detection.classifier.ModelConfig
+import com.aicheck.app.debug.LogcatCapture
 import com.aicheck.app.overlay.OverlayCaptureService
 import com.aicheck.app.overlay.OverlayPermissions
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -95,6 +103,8 @@ fun SettingsScreen(onBack: () -> Unit) {
             Spacer(modifier = Modifier.height(24.dp))
             SectionHeading(stringResource(R.string.settings_experimental_heading))
             OverlaySection()
+            Spacer(modifier = Modifier.height(24.dp))
+            DebugLogSection()
             Spacer(modifier = Modifier.height(32.dp))
         }
     }
@@ -176,6 +186,49 @@ private fun OverlaySection() {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.error,
         )
+    }
+}
+
+/**
+ * Lets a user hand over real evidence for an overlay bug (bubble not showing
+ * over some app, unexpected battery use) entirely from their phone, no
+ * computer/adb needed — see [LogcatCapture] for why that's possible without
+ * any special permission, and docs/ARCHITECTURE.md "Screen overlay
+ * (experimental)" for what's actually logged.
+ */
+@Composable
+private fun DebugLogSection() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var confirmation by remember { mutableStateOf<String?>(null) }
+
+    SectionHeading(stringResource(R.string.settings_debug_log_heading))
+    Text(text = stringResource(R.string.settings_debug_log_body), style = MaterialTheme.typography.bodyMedium)
+    Spacer(modifier = Modifier.height(12.dp))
+
+    OutlinedButton(
+        onClick = {
+            scope.launch {
+                val log = withContext(Dispatchers.IO) {
+                    LogcatCapture.captureRecent(
+                        listOf("ForegroundAppWatcher", "OverlayCaptureService", "AIImageClassifier"),
+                    )
+                }
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("AI Check debug log", log))
+                confirmation = context.getString(
+                    R.string.settings_debug_log_copied,
+                    log.lineSequence().count(),
+                )
+            }
+        },
+    ) {
+        Text(text = stringResource(R.string.settings_debug_log_copy))
+    }
+
+    confirmation?.let { message ->
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(text = message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
     }
 }
 

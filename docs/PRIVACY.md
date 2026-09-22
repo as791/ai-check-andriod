@@ -56,6 +56,16 @@ persistent logs. Standard Android crash/ANR reporting (if a developer enables on
 in a future build) is out of scope for this document and must be disclosed
 separately if added — see `docs/ROADMAP.md` for what is *not* in this build.
 
+Settings -> Experimental -> "Copy debug log" is a manual, user-initiated exception
+worth calling out specifically: tapping it reads this app's own recent on-device
+log (via `LogcatCapture`) and copies it to your clipboard, so you can hand it to
+a developer if something's misbehaving (e.g. the overlay bubble). It only ever
+contains what the overlay code above already logs — app package names,
+timestamps, and show/hide booleans — never image bytes or screen content, and
+nothing is sent anywhere automatically; the log only leaves your device if you
+paste and send it yourself. Android's own log isolation means this can only ever
+read log lines this app produced itself, never another app's or the system's.
+
 ## Screen overlay (experimental, off by default)
 
 Settings -> Experimental -> "Enable overlay bubble" is a separate, opt-in feature

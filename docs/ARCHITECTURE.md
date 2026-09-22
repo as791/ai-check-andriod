@@ -256,6 +256,30 @@ different privacy posture than "capture what's on screen right now, once, becaus
 I tapped a button." Tap-to-capture keeps the same consent-per-action model as
 the rest of the app (you always initiate an analysis).
 
+### The capture surface's lifetime is per-visit, not per-tap or per-session
+
+`openCaptureSurface`/`closeCaptureSurface` open and close the
+`VirtualDisplay`/`ImageReader` for the duration of one continuous visit to
+Instagram/WhatsApp (tied to `shouldShow` in `watchForegroundApp`), not freshly
+per tap and not for the whole service session. Per-tap was the original
+design (a `VirtualDisplay` makes the system continuously mirror the screen
+into it, real GPU/battery cost even while nothing is being read from it, so
+opening one only for the ~1s a capture takes seemed like the obvious way to
+minimize that) — but on-device data (two separate debug-log captures from a
+real device) showed it doesn't hold up: this device's Android build only
+reliably backs *one* `VirtualDisplay` per `MediaProjection` grant. The very
+next `createVirtualDisplay()` call after a prior one was released fired
+`MediaProjection.Callback.onStop()` and killed the whole session — the
+overlay died on the second tap of every visit, 100% reproducible. A `Service`
+can't silently re-request `MediaProjection` consent (that requires an
+`Activity` to launch the system consent dialog), so per-tap open/close is
+fundamentally incompatible with "tap more than once" on this device.
+Per-visit is the middle ground: repeat taps within one visit reuse the same
+surface (no second `createVirtualDisplay()` call), and it's still closed the
+moment you leave Instagram/WhatsApp, so there's no mirroring cost for the
+rest of the time the overlay is left enabled — only while it's actually
+showing.
+
 ### System-revoked capture stops the whole overlay, not just that tap
 
 `MediaProjection.Callback.onStop()` (registered in `startProjection`) can fire on

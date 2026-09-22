@@ -77,6 +77,8 @@ class OverlayCaptureService : Service() {
 
     private var mediaProjection: MediaProjection? = null
     private var projectionCallback: MediaProjection.Callback? = null
+    private var captureReader: ImageReader? = null
+    private var captureDisplay: VirtualDisplay? = null
 
     private var screenWidth = 0
     private var screenHeight = 0
@@ -122,6 +124,7 @@ class OverlayCaptureService : Service() {
         Log.i(TAG, "onDestroy: stopping overlay (this is the moment battery cost should end)")
         watchJob?.cancel()
         removeBubble()
+        closeCaptureSurface()
         stopProjection()
         serviceScope.cancel()
         super.onDestroy()
@@ -136,6 +139,14 @@ class OverlayCaptureService : Service() {
                 val shouldShow = packageName != null && packageName in ForegroundAppWatcher.TARGET_PACKAGES
                 Log.d(TAG, "foregroundPackage=$packageName shouldShowBubble=$shouldShow")
                 bubbleView?.visibility = if (shouldShow) android.view.View.VISIBLE else android.view.View.GONE
+
+                // The capture surface's lifetime is tied to bubble visibility, not to
+                // an individual tap - see the comment above startProjection for why.
+                if (shouldShow) {
+                    openCaptureSurface()
+                } else {
+                    closeCaptureSurface()
+                }
             }
         }
     }
@@ -143,13 +154,22 @@ class OverlayCaptureService : Service() {
     // --- MediaProjection setup ---
     //
     // The MediaProjection consent (below) is obtained once and held for the whole
-    // service lifetime, but the VirtualDisplay/ImageReader it feeds are deliberately
-    // NOT: opening a VirtualDisplay makes the system continuously composite/mirror
-    // the screen into it, which costs real GPU work and battery even while nothing
-    // is being read from it. That mirror is only opened for the ~1 second a single
-    // capture takes (see openCaptureSurface/closeCaptureSurface, used from
-    // captureFrame), then torn down immediately - so the overlay's idle cost is just
-    // the lightweight UsageStatsManager polling in ForegroundAppWatcher.
+    // service lifetime. The VirtualDisplay/ImageReader it feeds, on the other hand,
+    // is opened only while the bubble is visible (i.e. for the duration of one
+    // continuous visit to Instagram/WhatsApp - see watchForegroundApp) rather than
+    // for the whole service session or freshly per tap. Per-tap open/close was the
+    // original design (cheaper: a VirtualDisplay makes the system continuously
+    // composite/mirror the screen into it, real GPU/battery cost even while nothing
+    // is being read from it) but doesn't hold up on-device: this device's Android
+    // build only reliably backs ONE VirtualDisplay per MediaProjection grant - the
+    // very next createVirtualDisplay() call after a prior one was released fires
+    // MediaProjection.Callback.onStop() and kills the whole session, seen on-device
+    // as the overlay dying on the second tap of every visit. A Service can't
+    // silently re-request MediaProjection consent (that needs an Activity to launch
+    // the system dialog), so keeping the surface open per-visit is the fix: repeat
+    // taps within one visit reuse it, and it's still closed the moment you leave
+    // Instagram/WhatsApp, so there's no mirroring cost the rest of the time the
+    // overlay is left enabled.
 
     private fun startProjection(resultCode: Int, data: Intent) {
         val metrics = DisplayMetrics()
@@ -202,7 +222,9 @@ class OverlayCaptureService : Service() {
         mediaProjection = null
     }
 
-    private fun openCaptureSurface(projection: MediaProjection): Pair<ImageReader, VirtualDisplay> {
+    private fun openCaptureSurface() {
+        if (captureDisplay != null) return // already open for this visit
+        val projection = mediaProjection ?: return
         Log.d(TAG, "openCaptureSurface at ${System.currentTimeMillis()}")
         val reader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
         val display = projection.createVirtualDisplay(
@@ -215,13 +237,18 @@ class OverlayCaptureService : Service() {
             null,
             null,
         )
-        return reader to display
+        captureReader = reader
+        captureDisplay = display
     }
 
-    private fun closeCaptureSurface(reader: ImageReader, display: VirtualDisplay) {
+    private fun closeCaptureSurface() {
+        val reader = captureReader ?: return
+        val display = captureDisplay
         Log.d(TAG, "closeCaptureSurface at ${System.currentTimeMillis()}")
-        display.release()
+        display?.release()
         reader.close()
+        captureReader = null
+        captureDisplay = null
     }
 
     // --- Bubble window ---
@@ -304,12 +331,12 @@ class OverlayCaptureService : Service() {
         }
         if (analysisJob?.isActive == true) return
 
-        val projection = mediaProjection ?: return
+        val reader = captureReader ?: return
         bubble.state = BubbleState.ANALYZING
         bubble.startAnalyzingAnimation()
 
         analysisJob = serviceScope.launch {
-            val capturedFile = runCatching { captureFrame(projection) }.getOrNull()
+            val capturedFile = runCatching { captureFrame(reader) }.getOrNull()
             if (capturedFile == null) {
                 showTransientError(bubble)
                 return@launch
@@ -350,45 +377,42 @@ class OverlayCaptureService : Service() {
         if (bubble.state == BubbleState.ERROR) bubble.state = BubbleState.IDLE
     }
 
-    private suspend fun captureFrame(projection: MediaProjection): File? = withContext(Dispatchers.IO) {
-        val (reader, display) = openCaptureSurface(projection)
+    private suspend fun captureFrame(reader: ImageReader): File? = withContext(Dispatchers.IO) {
+        // A just-opened VirtualDisplay (or one that hasn't produced a frame since
+        // its last read) needs a frame or two to catch up; briefly poll rather than
+        // failing on the first miss. The surface itself is NOT opened/closed here -
+        // see openCaptureSurface/closeCaptureSurface, tied to bubble visibility.
+        var image: Image? = null
+        for (attempt in 0 until FRAME_POLL_ATTEMPTS) {
+            image = reader.acquireLatestImage()
+            if (image != null) break
+            Thread.sleep(FRAME_POLL_DELAY_MS)
+        }
+        val img = image ?: return@withContext null
+
         try {
-            // A freshly opened VirtualDisplay needs a frame or two to start
-            // producing images; briefly poll rather than failing on the first miss.
-            var image: Image? = null
-            for (attempt in 0 until FRAME_POLL_ATTEMPTS) {
-                image = reader.acquireLatestImage()
-                if (image != null) break
-                Thread.sleep(FRAME_POLL_DELAY_MS)
-            }
-            val img = image ?: return@withContext null
+            val plane = img.planes[0]
+            val buffer: ByteBuffer = plane.buffer
+            val pixelStride = plane.pixelStride
+            val rowStride = plane.rowStride
+            val rowPadding = rowStride - pixelStride * screenWidth
 
-            try {
-                val plane = img.planes[0]
-                val buffer: ByteBuffer = plane.buffer
-                val pixelStride = plane.pixelStride
-                val rowStride = plane.rowStride
-                val rowPadding = rowStride - pixelStride * screenWidth
+            val rawBitmap = Bitmap.createBitmap(
+                screenWidth + rowPadding / pixelStride,
+                screenHeight,
+                Bitmap.Config.ARGB_8888,
+            )
+            rawBitmap.copyPixelsFromBuffer(buffer)
+            val cropped = Bitmap.createBitmap(rawBitmap, 0, 0, screenWidth, screenHeight)
+            if (cropped !== rawBitmap) rawBitmap.recycle()
 
-                val rawBitmap = Bitmap.createBitmap(
-                    screenWidth + rowPadding / pixelStride,
-                    screenHeight,
-                    Bitmap.Config.ARGB_8888,
-                )
-                rawBitmap.copyPixelsFromBuffer(buffer)
-                val cropped = Bitmap.createBitmap(rawBitmap, 0, 0, screenWidth, screenHeight)
-                if (cropped !== rawBitmap) rawBitmap.recycle()
-
-                val outDir = File(cacheDir, "shared").apply { mkdirs() }
-                val outFile = File(outDir, "overlay_capture_${System.currentTimeMillis()}.jpg")
-                FileOutputStream(outFile).use { out -> cropped.compress(Bitmap.CompressFormat.JPEG, 92, out) }
-                cropped.recycle()
-                outFile
-            } finally {
-                img.close()
-            }
+            val outDir = File(cacheDir, "shared").apply { mkdirs() }
+            val outFile = File(outDir, "overlay_capture_${System.currentTimeMillis()}.jpg")
+            FileOutputStream(outFile).use { out -> cropped.compress(Bitmap.CompressFormat.JPEG, 92, out) }
+            cropped.recycle()
+            outFile
         } finally {
-            closeCaptureSurface(reader, display)
+            img.close()
         }
     }
 

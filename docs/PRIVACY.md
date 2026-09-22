@@ -76,15 +76,21 @@ design; this section is what it means for your data specifically.
 - **Off unless you turn it on.** Nothing here runs, and none of the permissions
   below are requested, unless you explicitly enable it in Settings.
 - **What it can see:** while active, and only while Instagram or WhatsApp is the
-  app currently in front, a small floating bubble appears. Tapping it captures a
-  single screenshot-equivalent frame of whatever is on screen *at that moment* —
-  the same class of access a screen-recording app uses — and runs it through the
-  same on-device analysis as any other check in this app. It does not capture
-  anything before or after that single tap, and does not capture anything while
-  the bubble is hidden (i.e. while some other app is in front).
-  Android requires you to grant this via a system "screen capture" consent dialog
-  every time the overlay service is (re)started; this is not something the app can
-  request silently, and the consent does not persist across a service restart.
+  app currently in front, a small floating bubble appears, and the system begins
+  mirroring the screen into this app's process for as long as you stay in that
+  app (the same class of access a screen-recording app uses) — this is what lets
+  repeat taps in one visit work without re-prompting you for permission each
+  time. Tapping the bubble reads a single frame from that mirror at *that
+  moment* and runs it through the same on-device analysis as any other check in
+  this app; every other frame the system produces while you're scrolling is
+  never read, saved, or looked at by this app at all — the mirror exists only so
+  a tap has something to read from, not to continuously observe your screen.
+  Nothing is captured before the feature is enabled or after you leave
+  Instagram/WhatsApp (bubble hidden), and the mirror itself is torn down the
+  moment you do. Android requires you to grant this via a system "screen
+  capture" consent dialog every time the overlay service is (re)started; this
+  is not something the app can request silently, and the consent does not
+  persist across a service restart.
 - **What it does not see:** it never reads Instagram/WhatsApp's own data, network
   traffic, message content, or accessibility tree — it has no access to those at
   all. The two special permissions it requests are `SYSTEM_ALERT_WINDOW` (needed

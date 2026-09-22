@@ -73,6 +73,7 @@
     <string name="overlay_notification_title">AI Check overlay is active</string>
     <string name="overlay_notification_body">Tap the floating bubble over Instagram or WhatsApp to check what\'s on screen.</string>
     <string name="overlay_notification_stop">Stop</string>
+    <string name="overlay_projection_stopped_toast">AI Check overlay stopped: screen capture permission ended. Turn the overlay back on in Settings to keep using it.</string>
     <string name="settings_debug_log_heading">Overlay debug log</string>
     <string name="settings_debug_log_body">If the overlay bubble isn\'t behaving right (not appearing over an app, or using more battery than expected), copy the log below and share it — it only contains app package names, timestamps, and the bubble\'s show/hide decisions, never any screen content. See docs/PRIVACY.md.</string>
     <string name="settings_debug_log_copy">Copy debug log</string>

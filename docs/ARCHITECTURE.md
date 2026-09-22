@@ -256,6 +256,20 @@ different privacy posture than "capture what's on screen right now, once, becaus
 I tapped a button." Tap-to-capture keeps the same consent-per-action model as
 the rest of the app (you always initiate an analysis).
 
+### System-revoked capture stops the whole overlay, not just that tap
+
+`MediaProjection.Callback.onStop()` (registered in `startProjection`) can fire on
+its own, not only when the user taps the system's "stop sharing" control — seen
+on-device as the bubble silently disappearing mid-tap, with a capture that never
+completes. Since there's no way to tell from inside that callback whether the OS
+revoked capture for a legitimate reason (screen off, an app-lifecycle/idle
+timeout, or another device-specific policy) versus an actual bug, `onStop()`
+tears down the whole service via `stopSelf()` rather than trying to guess and
+silently retry — but it now also logs distinctly from a user-requested
+`ACTION_STOP` and shows a toast, because leaving the user to notice a vanished
+bubble with no explanation is worse than a one-line "capture permission ended,
+turn it back on" message. Re-enabling from Settings gets a fresh consent grant.
+
 ### What this does not do
 
 - Does not read Instagram/WhatsApp's UI, database, or network traffic — only a

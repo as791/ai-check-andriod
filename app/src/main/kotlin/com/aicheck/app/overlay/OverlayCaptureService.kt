@@ -26,6 +26,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.IntentCompat
@@ -168,8 +169,25 @@ class OverlayCaptureService : Service() {
         // not just when we call stop() ourselves - without handling it here, every
         // capture attempt after a system-initiated revoke would crash instead of
         // failing gracefully.
+        //
+        // It also fires unprompted on some devices/OS versions well before any user
+        // action - seen on-device as the whole overlay silently vanishing mid-tap
+        // (openCaptureSurface immediately followed by onDestroy, no error shown -
+        // see docs/ARCHITECTURE.md "Screen overlay (experimental)"). Since we can't
+        // distinguish "user tapped the system stop-sharing control" from "the OS
+        // revoked this MediaProjection on its own" from inside this callback, at
+        // least stop being silent about it: log it distinctly from a
+        // user-requested ACTION_STOP, and tell the user directly, since otherwise
+        // the bubble just disappears with no explanation and no persistent
+        // notification to point back to.
         val callback = object : MediaProjection.Callback() {
             override fun onStop() {
+                Log.w(TAG, "MediaProjection.onStop(): capture permission ended (system-revoked, not our own ACTION_STOP) - stopping overlay")
+                Toast.makeText(
+                    this@OverlayCaptureService,
+                    getString(R.string.overlay_projection_stopped_toast),
+                    Toast.LENGTH_LONG,
+                ).show()
                 stopSelf()
             }
         }

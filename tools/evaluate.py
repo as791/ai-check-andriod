@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Evaluate the bundled AI-image classifier against a labeled dataset.
 
-This is the tool referred to throughout docs/MODEL.md and docs/ARCHITECTURE.md as
-the intended source of truth for detector quality — AI Check's evidence weights and
+This is the tool referred to throughout internal-docs/MODEL.md and internal-docs/ARCHITECTURE.md as
+the intended source of truth for detector quality — Genned's evidence weights and
 classification thresholds should eventually be calibrated from real numbers this
 script produces, not guessed. It has NOT been run against a real dataset as part of
 building this repository: no labeled AI/real image corpus and no ML runtime were

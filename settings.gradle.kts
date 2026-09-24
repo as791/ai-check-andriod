@@ -14,7 +14,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ai-check"
+rootProject.name = "genned"
 
 include(":app")
 include(":domain")

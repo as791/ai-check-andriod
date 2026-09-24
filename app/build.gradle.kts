@@ -7,11 +7,11 @@ plugins {
 }
 
 android {
-    namespace = "com.aicheck.app"
+    namespace = "com.genned.app"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.aicheck.app"
+        applicationId = "com.genned.app"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
@@ -94,7 +94,7 @@ dependencies {
     implementation(libs.exifinterface)
 
     // On-device AI classifier runtime. See domain classifier docs at
-    // app/src/main/kotlin/com/aicheck/app/data/detection/classifier and docs/MODEL.md
+    // app/src/main/kotlin/com/genned/app/data/detection/classifier and internal-docs/MODEL.md
     // for the model this loads (or does not, if not yet bundled).
     implementation(libs.onnxruntime.android)
 

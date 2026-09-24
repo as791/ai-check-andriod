@@ -2,7 +2,7 @@
 """Export the AI-image classifier to ONNX for bundling into the Android app.
 
 This project targets `Dafilab/ai-image-detector` on Hugging Face (Apache-2.0,
-EfficientNet-B4 via timm) as documented in docs/MODEL.md — see that file first for
+EfficientNet-B4 via timm) as documented in internal-docs/MODEL.md — see that file first for
 why this model was chosen and its known limitations, including that the repo is
 gated (you must request/accept access and `huggingface-cli login` before this
 script's download will succeed — a plain 401 GatedRepoError otherwise).
@@ -17,7 +17,7 @@ Steps this script performs:
 You still MUST, by hand, after running this:
   - Inspect the exported graph's real input/output tensor names (e.g. with
     https://netron.app) and update INPUT_NAME in
-    app/src/main/kotlin/com/aicheck/app/data/detection/classifier/ModelConfig.kt
+    app/src/main/kotlin/com/genned/app/data/detection/classifier/ModelConfig.kt
     if it differs from "pixel_values".
   - Confirm the output label order still matches ModelConfig.interpretOutput's
     `[ai, human]` assumption (confirmed from this repo's config.json
@@ -25,11 +25,11 @@ You still MUST, by hand, after running this:
   - Run tools/evaluate.py against a labeled dataset and sanity-check the numbers
     before shipping.
   - Confirm you accept the model's license (Apache-2.0) and are comfortable with
-    its documented training data / limitations in docs/MODEL.md.
+    its documented training data / limitations in internal-docs/MODEL.md.
 
 Usage:
     pip install -r tools/requirements.txt
-    huggingface-cli login   # after requesting access on the model page — see docs/MODEL.md
+    huggingface-cli login   # after requesting access on the model page — see internal-docs/MODEL.md
     python tools/convert_model.py --output app/src/main/assets/models/ai-image-detector.onnx
 
     # If hf_hub_download fails locally (e.g. a NameResolutionError on
@@ -67,7 +67,7 @@ def _load_state_dict(checkpoint_path: Path) -> dict:
     # optimizer state or the module object itself, not just tensors), so PyTorch's
     # safer weights_only loader would reject it. Only pass a checkpoint here from a
     # repo whose contents you've deliberately chosen to trust, as documented in
-    # docs/MODEL.md.
+    # internal-docs/MODEL.md.
     raw = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
     if isinstance(raw, dict):

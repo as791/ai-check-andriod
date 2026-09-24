@@ -5,7 +5,7 @@ looks for a file at this exact path — `app/src/main/assets/models/ai-image-det
 — and honestly reports the classifier signal as **unavailable** when it's missing,
 rather than fabricating a score.
 
-See `docs/MODEL.md` in the repository root for:
+See `internal-docs/MODEL.md` in the repository root for:
 - the specific model this app is built for (name, source, license),
 - exactly how to export/convert it to ONNX,
 - how to verify the input/output tensor names and label order before trusting it,

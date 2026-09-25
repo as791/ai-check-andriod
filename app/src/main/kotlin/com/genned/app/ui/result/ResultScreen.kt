@@ -3,6 +3,7 @@ package com.genned.app.ui.result
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,11 +14,18 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -43,6 +51,7 @@ import com.genned.app.ui.components.classificationLabel
 import kotlinx.coroutines.launch
 import android.graphics.BitmapFactory
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ResultScreen(
     onCheckAnother: () -> Unit,
@@ -53,33 +62,48 @@ fun ResultScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    when (val state = uiState) {
-        ResultUiState.Loading -> Column(
-            modifier = Modifier.fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            CircularProgressIndicator()
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {},
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.cd_back))
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        when (val state = uiState) {
+            ResultUiState.Loading -> Column(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                CircularProgressIndicator()
+            }
+            ResultUiState.NotFound -> ResultNotFound(onBack = onBack, contentPadding = padding)
+            is ResultUiState.Loaded -> ResultContent(
+                analysis = state.analysis,
+                onShare = {
+                    scope.launch {
+                        val card = viewModel.renderShareCard() ?: return@launch
+                        context.startActivity(ShareIntentFactory.forResultCard(context, card))
+                    }
+                },
+                onCheckAnother = onCheckAnother,
+                contentPadding = padding,
+            )
         }
-        ResultUiState.NotFound -> ResultNotFound(onBack = onBack)
-        is ResultUiState.Loaded -> ResultContent(
-            analysis = state.analysis,
-            onShare = {
-                scope.launch {
-                    val card = viewModel.renderShareCard() ?: return@launch
-                    context.startActivity(ShareIntentFactory.forResultCard(context, card))
-                }
-            },
-            onCheckAnother = onCheckAnother,
-        )
     }
 }
 
 @Composable
-private fun ResultNotFound(onBack: () -> Unit) {
+private fun ResultNotFound(onBack: () -> Unit, contentPadding: PaddingValues) {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .padding(contentPadding)
             .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -108,14 +132,16 @@ private fun ResultContent(
     analysis: SavedAnalysis,
     onShare: () -> Unit,
     onCheckAnother: () -> Unit,
+    contentPadding: PaddingValues,
 ) {
     val result = analysis.result
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
+            .padding(contentPadding)
             .padding(horizontal = 24.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 24.dp, bottom = 32.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
     ) {
         item {
             ResultHeader(analysis)

@@ -104,7 +104,7 @@ def main() -> None:
                     "int8_max_diff": max(diffs)}
         except Exception as e:  # noqa: BLE001
             print(f"::warning::bundled int8 quantization failed: {e}", file=sys.stderr)
-        rows.append({"model": "dafilab (bundled)", "exported": True, "parity_max_diff": 0.0,
+        rows.append({"model": "app as shipped", "exported": True, "parity_max_diff": 0.0,
                      "fp32_mb": args.bundled.stat().st_size / 1e6, "fp32_ms": latency_ms(session, feed),
                      "inferences_per_check": 2, **int8})
 

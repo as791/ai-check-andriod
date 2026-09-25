@@ -11,11 +11,12 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * Scans EXIF (Software/UserComment/ImageDescription) and, for PNG, tEXt/iTXt chunks
- * for a real, known generator signature (see [GeneratorSignatures]). A match is
- * concrete evidence — the literal matched string is preserved as `evidence`. No
- * match means nothing was found; it is never presented as evidence of a human origin,
- * since this metadata is trivially stripped by re-saving or sharing an image.
+ * Scans EXIF (Software/UserComment/ImageDescription/Artist) and, for PNG, tEXt/iTXt
+ * chunks for a real, known generator signature (see [GeneratorSignatures]). A match
+ * is concrete evidence — the field and the matched signature are preserved as
+ * `evidence`. No match means nothing was found; it is never presented as evidence
+ * of a human origin, since this metadata is trivially stripped by re-saving or
+ * sharing an image.
  */
 class KnownGeneratorMetadataProvider : DetectionProvider {
     override val signalType: SignalType = SignalType.GENERATOR_METADATA
@@ -33,9 +34,8 @@ class KnownGeneratorMetadataProvider : DetectionProvider {
                 availability = SignalAvailability.AVAILABLE,
                 score = 1f,
                 confidence = 0.9f,
-                description = "Software metadata contains a reference associated with an AI " +
-                    "image-generation tool.",
-                evidence = match,
+                description = match.description,
+                evidence = match.evidence,
             )
         } else {
             DetectionSignal(
@@ -50,36 +50,62 @@ class KnownGeneratorMetadataProvider : DetectionProvider {
         }
     }
 
-    private fun findExifMatch(file: File): String? {
+    private data class MetadataMatch(val evidence: String, val description: String)
+
+    private fun findExifMatch(file: File): MetadataMatch? {
         val exif = try {
             ExifInterface(file)
         } catch (e: Exception) {
             return null
         }
-        val candidates = listOfNotNull(
-            exif.getAttribute(ExifInterface.TAG_SOFTWARE),
-            exif.getAttribute(ExifInterface.TAG_USER_COMMENT),
-            exif.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION),
-            exif.getAttribute(ExifInterface.TAG_ARTIST),
+        GeneratorSignatures.matchSoftware(exif.getAttribute(ExifInterface.TAG_SOFTWARE))?.let {
+            return softwareMatch("EXIF Software", it)
+        }
+        val freeTextFields = listOf(
+            "EXIF UserComment" to ExifInterface.TAG_USER_COMMENT,
+            "EXIF ImageDescription" to ExifInterface.TAG_IMAGE_DESCRIPTION,
+            "EXIF Artist" to ExifInterface.TAG_ARTIST,
         )
-        for (candidate in candidates) {
-            GeneratorSignatures.findMatch(candidate)?.let { return it }
+        for ((field, tag) in freeTextFields) {
+            GeneratorSignatures.matchStructuredParameters(exif.getAttribute(tag))?.let {
+                return parametersMatch(field, it)
+            }
         }
         return null
     }
 
-    private fun findPngMatch(file: File): String? {
+    private fun findPngMatch(file: File): MetadataMatch? {
         if (!file.name.endsWith(".png", ignoreCase = true) && !looksLikePng(file)) return null
         val chunks = PngChunkReader.readTextChunks(file)
         for (chunk in chunks) {
+            val field = "PNG \"${chunk.keyword}\" chunk"
             if (chunk.keyword.equals(GeneratorSignatures.SD_PARAMETERS_CHUNK_KEYWORD, ignoreCase = true)) {
-                return "PNG \"parameters\" chunk (Stable Diffusion–family generation metadata)"
+                return MetadataMatch(
+                    evidence = "PNG \"parameters\" chunk (Stable Diffusion–family generation metadata)",
+                    description = "Image metadata contains a PNG \"parameters\" text chunk, where " +
+                        "Stable Diffusion–family tools store generation settings.",
+                )
             }
-            GeneratorSignatures.findMatch(chunk.value)?.let { return it }
-            GeneratorSignatures.findMatch(chunk.keyword)?.let { return it }
+            val match = if (chunk.keyword.equals("Software", ignoreCase = true)) {
+                GeneratorSignatures.matchSoftware(chunk.value)?.let { softwareMatch(field, it) }
+            } else {
+                GeneratorSignatures.matchStructuredParameters(chunk.value, chunk.keyword)
+                    ?.let { parametersMatch(field, it) }
+            }
+            if (match != null) return match
         }
         return null
     }
+
+    private fun softwareMatch(field: String, tool: String) = MetadataMatch(
+        evidence = "$field: $tool",
+        description = "Image metadata ($field) names an AI image-generation tool.",
+    )
+
+    private fun parametersMatch(field: String, label: String) = MetadataMatch(
+        evidence = "$field: $label",
+        description = "Image metadata ($field) contains AI image-generation parameters.",
+    )
 
     private fun looksLikePng(file: File): Boolean = try {
         file.inputStream().use { stream ->

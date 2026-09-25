@@ -20,6 +20,28 @@ exists or is implied. Every video result's limitations say so. Metadata/provenan
 inspection (EXIF, generator signatures, C2PA) is not implemented for video in this
 version — see internal-docs/ARCHITECTURE.md.
 
+## Detection quality phases (current focus)
+
+**Phase 1: measured, honest detection on images, Reels and shared content.**
+Tracked in [#14](https://github.com/as791/genned/issues/14).
+- Benchmark the bundled model (`Model eval`). Done: baseline in
+  `internal-docs/MODEL.md`.
+- Calibrate scores and set HIGH/LOW bands from data.
+- Compare candidate detectors (`Model compare`) and switch only for a clear win.
+- Benchmark the Reels path on real vs AI video (`Video eval`, which needs the
+  `HF_TOKEN` secret for its gated datasets).
+
+**Phase 2: adversarial robustness.** Tracked in
+[#15](https://github.com/as791/genned/issues/15). Genned is open source, so an
+attacker can compute gradients against the exact on-device model. White-box
+attacks are therefore the realistic threat, not a theoretical one. Phase 2
+benchmarks mobile-feasible defenses against **adaptive** white-box attacks
+(PGD/APGD with EOT/BPDA) and black-box attacks (transfer, query-based, the RAID
+transferable-adversarial set, and social-media laundering). It then integrates
+the defense with the best worst-case robustness that stays within the
+clean-accuracy and on-device cost budget. It starts once Phase 1 has fixed the
+model, because a defense is evaluated on a specific detector.
+
 ## V2
 
 - iOS.

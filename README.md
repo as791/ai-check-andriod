@@ -133,8 +133,9 @@ only ever bundled at build time.
   (500 images each), the bundled classifier reaches an AUC of 0.91 and 0.80
   (1.0 = perfect, 0.5 = coin flip). On the harder set, about a third of real
   images were scored as likely AI, and DALL·E 3 images were caught only about
-  half the time. Its raw scores were also far too confident. Calibrating them
-  and evaluating stronger models is the current focus: see
+  half the time. Its raw scores were far too confident, so the app now
+  calibrates them (see below). Evaluating stronger models is the current focus:
+  see
   [issue #14](https://github.com/as791/genned/issues/14) and
   `internal-docs/MODEL.md` "Measured accuracy". Anyone can re-run the benchmark
   from the repo's Actions tab ("Model eval").
@@ -145,9 +146,10 @@ only ever bundled at build time.
   and will be weaker against newer generators; compression, screenshotting,
   and intentional adversarial editing can all shift results in either
   direction.
-- The evidence weights and HIGH/UNCERTAIN/LOW thresholds
-  (`domain/evidence/EvidenceWeights.kt`) are a documented, transparent
-  starting point — not a statistically calibrated model.
+- **Scores are calibrated, and bands are set to avoid false alarms.** The raw
+  classifier's scores are rescaled to match how often it's actually right, and
+  "HIGH" needs 90% or more. In the benchmark that kept real images labeled HIGH
+  under 3%. The trade-off is that many images honestly come out UNCERTAIN.
 
 ## Contributing
 

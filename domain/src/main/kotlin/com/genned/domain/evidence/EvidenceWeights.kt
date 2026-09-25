@@ -3,10 +3,10 @@ package com.genned.domain.evidence
 /**
  * Transparent, fixed weights for [EvidenceEngine]'s weighted-average blend.
  *
- * These are a documented starting point, not a validated calibration — see
- * internal-docs/ARCHITECTURE.md "Recalibrating the evidence weights". They live in one place,
- * isolated from providers and UI, specifically so they can be replaced once real
- * evaluation data (tools/evaluate.py) exists.
+ * The classification thresholds are set from benchmark data (see [HIGH_THRESHOLD]).
+ * The blend weights are still a documented starting point, see
+ * internal-docs/ARCHITECTURE.md "Recalibrating the evidence weights". They live in one
+ * place, isolated from providers and UI, so they can be replaced from evaluation data.
  *
  * All weights below except [CLASSIFIER_WEIGHT] are *maximums*: [EvidenceEngine] scales
  * them by the signal's own score, so a corroborating signal that found nothing (score
@@ -25,11 +25,22 @@ object EvidenceWeights {
     /** Generic EXIF anomalies (missing/stripped/inconsistent fields) are weak on their own. */
     const val EXIF_ANOMALY_WEIGHT = 0.06f
 
-    /** aiLikelihood >= this -> [com.genned.domain.model.Classification.HIGH]. */
-    const val HIGH_THRESHOLD = 0.70f
+    /**
+     * aiLikelihood >= this -> [com.genned.domain.model.Classification.HIGH].
+     *
+     * Chosen from data by tools/calibrate.py (Model eval run 36185656205) on calibrated
+     * classifier scores. It is the lowest threshold at which at most 5% of real images
+     * show HIGH in every benchmark dataset x condition (worst case 2.8%). With 0.70,
+     * up to 39% of real images in the harder dataset showed HIGH.
+     */
+    const val HIGH_THRESHOLD = 0.90f
 
-    /** aiLikelihood < this -> [com.genned.domain.model.Classification.LOW]; between the two is UNCERTAIN. */
-    const val LOW_THRESHOLD = 0.30f
+    /**
+     * aiLikelihood < this -> [com.genned.domain.model.Classification.LOW]; between the two
+     * is UNCERTAIN. Chosen the same way: the highest threshold at which at most 10% of
+     * AI images show LOW (worst case 8.0%), with UNCERTAIN at least 20 points wide.
+     */
+    const val LOW_THRESHOLD = 0.25f
 
     /** Likelihood reported when no signal produced usable evidence at all. */
     const val NO_EVIDENCE_LIKELIHOOD = 0.5f

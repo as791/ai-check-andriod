@@ -49,31 +49,41 @@ class AIImageClassifierProvider(private val context: Context) : DetectionProvide
                     signalType,
                     "Could not decode the normalized image for classification.",
                 )
-            val inputBuffer = preprocess(bitmap)
+            // Two views of the same image - the whole frame squashed to a square, and
+            // an aspect-preserving center crop - averaged in logit space. Measured to
+            // beat either view alone on both benchmark datasets (internal-docs/MODEL.md).
+            val views = listOf(squashed(bitmap), centerCropped(bitmap))
             bitmap.recycle()
 
             val env = OrtEnvironment.getEnvironment()
-            OnnxTensor.createTensor(env, inputBuffer, ModelConfig.INPUT_SHAPE).use { tensor ->
-                ortSession.run(mapOf(ModelConfig.INPUT_NAME to tensor)).use { results ->
-                    val rawOutput = results[0].value
-                    val aiProbability = ModelConfig.interpretOutput(rawOutput)
-                    // Only the two output logits and the derived probability are
-                    // logged - never image bytes, metadata, or file names (see
-                    // internal-docs/PRIVACY.md "Logging"). This is what makes a flat-50% or
-                    // always-100% result diagnosable from logcat instead of a guess.
-                    Log.d(TAG, "Classifier raw output=${describe(rawOutput)} -> P(ai)=$aiProbability")
-                    DetectionSignal(
-                        type = signalType,
-                        availability = SignalAvailability.AVAILABLE,
-                        score = aiProbability,
-                        confidence = ModelConfig.BASE_CONFIDENCE,
-                        description = "The on-device visual classifier estimates a " +
-                            "${(aiProbability * 100).toInt()}% probability this image is " +
-                            "AI-generated.",
-                        evidence = ModelConfig.DISPLAY_NAME,
-                    )
-                }
+            val logitDifferences = views.map { view ->
+                OnnxTensor.createTensor(env, toInputBuffer(view), ModelConfig.INPUT_SHAPE).use { tensor ->
+                    ortSession.run(mapOf(ModelConfig.INPUT_NAME to tensor)).use { results ->
+                        val rawOutput = results[0].value
+                        // Only the output logits and derived numbers are logged - never
+                        // image bytes, metadata, or file names (see internal-docs/PRIVACY.md
+                        // "Logging"). This keeps odd results diagnosable from logcat.
+                        Log.d(TAG, "Classifier raw output=${describe(rawOutput)}")
+                        ModelConfig.logitDifference(rawOutput)
+                    }
+                }.also { view.recycle() }
             }
+            if (logitDifferences.any { it == null }) {
+                return@withContext DetectionSignal.error(signalType, "The visual classifier returned an unexpected output.")
+            }
+            val meanDifference = logitDifferences.filterNotNull().average()
+            val aiProbability = ModelConfig.calibratedProbability(meanDifference)
+            Log.d(TAG, "Classifier mean logit gap=$meanDifference -> calibrated P(ai)=$aiProbability")
+            DetectionSignal(
+                type = signalType,
+                availability = SignalAvailability.AVAILABLE,
+                score = aiProbability,
+                confidence = ModelConfig.BASE_CONFIDENCE,
+                description = "The on-device visual classifier estimates a " +
+                    "${(aiProbability * 100).toInt()}% probability this image is " +
+                    "AI-generated.",
+                evidence = ModelConfig.DISPLAY_NAME,
+            )
         } catch (e: Exception) {
             Log.e(TAG, "Classifier inference failed; reporting the signal as ERROR", e)
             DetectionSignal.error(signalType, "The visual classifier failed to run on this image.")
@@ -115,9 +125,29 @@ class AIImageClassifierProvider(private val context: Context) : DetectionProvide
         const val TAG = "AIImageClassifier"
     }
 
-    private fun preprocess(bitmap: Bitmap): FloatBuffer {
+    /** The whole image resized to INPUT_SIZE x INPUT_SIZE, ignoring aspect ratio. */
+    private fun squashed(bitmap: Bitmap): Bitmap {
         val size = ModelConfig.INPUT_SIZE
-        val scaled = Bitmap.createScaledBitmap(bitmap, size, size, true)
+        return Bitmap.createScaledBitmap(bitmap, size, size, true).let {
+            // createScaledBitmap returns the source itself when no scaling is needed.
+            if (it === bitmap) bitmap.copy(Bitmap.Config.ARGB_8888, false) else it
+        }
+    }
+
+    /** Short side resized to INPUT_SIZE, then the central INPUT_SIZE square. */
+    private fun centerCropped(bitmap: Bitmap): Bitmap {
+        val size = ModelConfig.INPUT_SIZE
+        val scale = size.toFloat() / minOf(bitmap.width, bitmap.height)
+        val width = maxOf(size, Math.round(bitmap.width * scale))
+        val height = maxOf(size, Math.round(bitmap.height * scale))
+        val resized = Bitmap.createScaledBitmap(bitmap, width, height, true)
+        val cropped = Bitmap.createBitmap(resized, (width - size) / 2, (height - size) / 2, size, size)
+        if (resized !== bitmap && resized !== cropped) resized.recycle()
+        return if (cropped === bitmap) bitmap.copy(Bitmap.Config.ARGB_8888, false) else cropped
+    }
+
+    private fun toInputBuffer(scaled: Bitmap): FloatBuffer {
+        val size = ModelConfig.INPUT_SIZE
         val pixels = IntArray(size * size)
         scaled.getPixels(pixels, 0, size, 0, 0, size, size)
 
@@ -134,7 +164,6 @@ class AIImageClassifierProvider(private val context: Context) : DetectionProvide
             buffer.put(channelSize + i, (g - ModelConfig.MEAN[1]) / ModelConfig.STD[1])
             buffer.put(2 * channelSize + i, (b - ModelConfig.MEAN[2]) / ModelConfig.STD[2])
         }
-        if (scaled !== bitmap) scaled.recycle()
         return buffer
     }
 }

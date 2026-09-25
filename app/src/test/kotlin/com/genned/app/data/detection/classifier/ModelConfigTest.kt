@@ -16,34 +16,60 @@ class ModelConfigTest {
         // AI-leaning prediction - seen on-device as a flat 50% on AI-generated images.
         val p = ModelConfig.interpretOutput(logits(ai = -1.0f, human = -4.0f))
 
-        assertThat(p).isWithin(0.001f).of(0.9526f) // sigmoid(3)
+        assertThat(p).isWithin(0.001f).of(ModelConfig.calibratedProbability(3.0))
+        assertThat(p).isGreaterThan(0.6f)
     }
 
     @Test
-    fun `strongly AI-leaning logits give a high probability`() {
-        assertThat(ModelConfig.interpretOutput(logits(ai = 5f, human = -3f))).isGreaterThan(0.99f)
+    fun `logit difference is ai minus human`() {
+        assertThat(ModelConfig.logitDifference(logits(ai = 3.8f, human = -2.9f))!!).isWithin(1e-5).of(6.7)
+        assertThat(ModelConfig.logitDifference(floatArrayOf(4f))!!).isWithin(1e-6).of(4.0)
+    }
+
+    @Test
+    fun `calibration keeps a real on-device output from claiming near certainty`() {
+        // Logged on-device from an Instagram post: raw sigmoid said 99.97% AI. The
+        // benchmark showed raw scores that high are right only 72-93% of the time.
+        val p = ModelConfig.interpretOutput(logits(ai = 4.502205f, human = -3.5011606f))
+
+        assertThat(p).isGreaterThan(0.8f)
+        assertThat(p).isLessThan(0.9f)
+    }
+
+    @Test
+    fun `strongly AI-leaning logits give a high but not certain probability`() {
+        val p = ModelConfig.interpretOutput(logits(ai = 5f, human = -3f))
+        assertThat(p).isGreaterThan(0.8f)
+        assertThat(p).isLessThan(0.99f)
     }
 
     @Test
     fun `strongly human-leaning logits give a low probability`() {
-        assertThat(ModelConfig.interpretOutput(logits(ai = -3f, human = 5f))).isLessThan(0.01f)
+        assertThat(ModelConfig.interpretOutput(logits(ai = -3f, human = 5f))).isLessThan(0.2f)
+    }
+
+    @Test
+    fun `calibration is monotonic in the logit gap`() {
+        val gaps = listOf(-20.0, -5.0, -1.0, 0.0, 1.0, 5.0, 20.0)
+        val probabilities = gaps.map(ModelConfig::calibratedProbability)
+        assertThat(probabilities).isInStrictOrder()
     }
 
     @Test
     fun `equal logits mean genuinely uncertain`() {
-        assertThat(ModelConfig.interpretOutput(logits(ai = 1.7f, human = 1.7f))).isWithin(0.001f).of(0.5f)
+        assertThat(ModelConfig.interpretOutput(logits(ai = 1.7f, human = 1.7f))).isWithin(0.02f).of(0.5f)
     }
 
     @Test
     fun `extreme logits saturate to 0 and 1 without overflowing`() {
-        assertThat(ModelConfig.interpretOutput(logits(ai = 500f, human = -500f))).isEqualTo(1f)
-        assertThat(ModelConfig.interpretOutput(logits(ai = -500f, human = 500f))).isEqualTo(0f)
+        assertThat(ModelConfig.interpretOutput(logits(ai = 5000f, human = -5000f))).isEqualTo(1f)
+        assertThat(ModelConfig.interpretOutput(logits(ai = -5000f, human = 5000f))).isEqualTo(0f)
     }
 
     @Test
-    fun `single raw logit is passed through a sigmoid`() {
-        assertThat(ModelConfig.interpretOutput(floatArrayOf(0f))).isWithin(0.001f).of(0.5f)
-        assertThat(ModelConfig.interpretOutput(floatArrayOf(4f))).isWithin(0.001f).of(0.982f)
+    fun `single raw logit is calibrated like a logit gap`() {
+        assertThat(ModelConfig.interpretOutput(floatArrayOf(4f)))
+            .isWithin(0.001f).of(ModelConfig.calibratedProbability(4.0))
     }
 
     @Test
@@ -51,5 +77,6 @@ class ModelConfigTest {
         assertThat(ModelConfig.interpretOutput(null)).isEqualTo(0.5f)
         assertThat(ModelConfig.interpretOutput(floatArrayOf(1f, 2f, 3f))).isEqualTo(0.5f)
         assertThat(ModelConfig.interpretOutput(logits(ai = Float.NaN, human = 1f))).isEqualTo(0.5f)
+        assertThat(ModelConfig.logitDifference(null)).isNull()
     }
 }

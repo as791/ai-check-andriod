@@ -11,9 +11,9 @@ accepts the `pixel_values` input and emits two raw logits. If the file is ever
 missing from a build, `AIImageClassifierProvider` honestly reports the
 `AI_CLASSIFIER` signal as unavailable rather than fabricating a score.
 
-Accuracy has now been measured (see "Measured accuracy"). What is still **not**
-done: `ModelConfig.BASE_CONFIDENCE` and
-the HIGH/UNCERTAIN/LOW thresholds are uncalibrated.
+Accuracy has been measured, and scores are calibrated and bands set from data (see
+"Measured accuracy"). `ModelConfig.BASE_CONFIDENCE`, which weighs the classifier
+against the other signals, is still a fixed value.
 
 **`Dafilab/ai-image-detector` is a gated repo on Hugging Face** — confirmed by
 actually running the conversion: a plain download gets a `401 GatedRepoError`, even
@@ -183,6 +183,29 @@ Findings:
   0.748 → 0.722 jpeg75).
 - **Per generator** (detected at 0.5, original): Midjourney v6 86%, SDXL 82%,
   SD 2.1 80%, SD3 76%, **DALL·E 3 56%**.
+
+### Calibration and preprocessing (shipped, [run 36185656205](https://github.com/as791/genned/actions/runs/36185656205))
+
+- **Preprocessing: two views averaged.** The app runs the model on the whole
+  image squashed to 380×380 *and* on an aspect-preserving center crop, then
+  averages the two logit gaps. AUC: Defactify 0.952 vs 0.915 (squash only), the
+  harder set 0.773 vs 0.771. The adoption rule was "at least as good as squash on
+  both datasets". Cost: 2 inferences per image.
+- **Calibration:** `P(ai) = sigmoid(0.2252 · (ai − human) + 0.0494)` (Platt scaling
+  on 3,000 per-image scores, all datasets and conditions pooled). Scores above 99%
+  or below 1% drop from 58–71% of images to about 1%. ECE drops from 0.125/0.247 to
+  0.102/0.081 (pooled fit). A fit on one dataset alone transfers only partly to the
+  other (ECE 0.161/0.205), so treat the percentages as approximate.
+- **Bands** (`EvidenceWeights`): **HIGH ≥ 90%, LOW < 25%**, UNCERTAIN in between.
+  Worst case over every dataset × condition: **2.8% of real images shown HIGH**
+  (was up to 38.8% with the old 70% band) and **8.0% of AI images shown LOW**.
+  Accepted cost: many images now read UNCERTAIN. That's the honest answer for a
+  detector with AUC 0.77 on the harder set, and only a better model (Phase 1 model
+  comparison) can shrink the UNCERTAIN band.
+- Example: the on-device output `[[4.50, -3.50]]` that used to read 99.97% now reads
+  86% (UNCERTAIN).
+- `tools/evaluate.py --preprocess avg --calibration app` reproduces the app as
+  shipped. The `Model eval` report includes it as the "app as shipped" rows.
 
 Caveats: MS-COCO (Defactify's real photos) is a very common training source, so
 Defactify numbers may be optimistic. What the second dataset's "real" class

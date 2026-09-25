@@ -43,6 +43,14 @@ jobs:
               --json-dir eval-results \
               --scores-csv eval-results/scores.csv \
               | tee "eval-results/$name.txt" || echo "::warning::evaluation failed for $name"
+            # The app exactly as shipped: two views averaged + calibrated, scored against
+            # the app's current HIGH/LOW bands.
+            python tools/evaluate.py \
+              --model app/src/main/assets/models/ai-image-detector.onnx \
+              --dataset "$dir" --dataset-name "$name" \
+              --conditions original,jpeg75,social --preprocess avg --calibration app \
+              --model-name "app as shipped" --json-dir eval-results > /dev/null \
+              || echo "::warning::as-shipped evaluation failed for $name"
             echo "::endgroup::"
           done
 

@@ -29,11 +29,23 @@ object ModelConfig {
 
     /**
      * Fixed baseline confidence for this signal, independent of the model's own
-     * output. Not empirically calibrated — see internal-docs/MODEL.md "Known limitations" and
-     * tools/evaluate.py, which is how this should eventually be replaced with a
-     * data-driven value (e.g. scaled by margin-from-0.5, or by measured accuracy).
+     * output. It only weighs the classifier against the other signals in
+     * EvidenceEngine; the probability itself is calibrated (see [CALIBRATION_SLOPE]).
      */
     const val BASE_CONFIDENCE = 0.75f
+
+    /**
+     * Platt scaling of the raw logit gap: P(ai) = sigmoid(SLOPE * (ai - human) + INTERCEPT).
+     *
+     * The raw model is badly overconfident: in the first benchmark 60-74% of its
+     * scores were above 99% or below 1%, while scores above 90% were only 72-93%
+     * AI. These values were fit by tools/calibrate.py on 3,000 per-image scores
+     * (2 public datasets x 3 conditions, `avg` preprocessing) in Model eval run
+     * 36185656205. After calibration about 1% of scores are that extreme. Refit
+     * whenever the model or AIImageClassifierProvider's preprocessing changes. See internal-docs/MODEL.md.
+     */
+    const val CALIBRATION_SLOPE = 0.2252f
+    const val CALIBRATION_INTERCEPT = 0.0494f
 
     /**
      * Interprets the raw ONNX output as a single AI-probability float in [0,1].
@@ -42,22 +54,34 @@ object ModelConfig {
      * its output tensor is literally named "logits", and timm's efficientnet_b4 has no
      * softmax layer — so the softmax is applied here. For a 2-class output that is
      * exactly sigmoid(ai_logit - human_logit). Class order is `[ai, human]`, per the
-     * real model's config.json `label_mapping` (`{"0": "ai", "1": "human"}`).
+     * real model's config.json `label_mapping` (`{"0": "ai", "1": "human"}`). The logit
+     * gap is then calibrated ([calibratedProbability]) so the percentage means what it
+     * says.
      *
      * An earlier version "normalized" with `ai / (ai + human)`, which is not a
      * softmax: whenever both logits were negative (an entirely ordinary output) its
      * `total <= 0` guard forced exactly 0.5, so real, confident predictions showed
      * up as a flat 50% — confirmed on-device with the real bundled model.
      */
-    fun interpretOutput(rawOutput: Any?): Float {
+    fun interpretOutput(rawOutput: Any?): Float = logitDifference(rawOutput)?.let(::calibratedProbability) ?: 0.5f
+
+    /**
+     * The raw evidence, before calibration: ai_logit - human_logit (or a single AI
+     * logit). Null when the output isn't one the model should produce.
+     */
+    fun logitDifference(rawOutput: Any?): Double? {
         val flat = flatten(rawOutput)
-        if (flat.any { it.isNaN() }) return 0.5f
+        if (flat.any { it.isNaN() }) return null
         return when (flat.size) {
-            2 -> sigmoid(flat[0].toDouble() - flat[1].toDouble())
-            1 -> sigmoid(flat[0].toDouble()) // a single raw logit for P(ai)
-            else -> 0.5f
+            2 -> flat[0].toDouble() - flat[1].toDouble()
+            1 -> flat[0].toDouble() // a single raw logit for P(ai)
+            else -> null
         }
     }
+
+    /** Calibrated P(ai) for a logit gap, e.g. the mean of the gaps from each input view. */
+    fun calibratedProbability(logitDifference: Double): Float =
+        sigmoid(CALIBRATION_SLOPE * logitDifference + CALIBRATION_INTERCEPT)
 
     /** Computed in Double so extreme logits saturate cleanly to 0/1 instead of overflowing. */
     private fun sigmoid(x: Double): Float =

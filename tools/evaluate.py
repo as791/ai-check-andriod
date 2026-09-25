@@ -83,8 +83,12 @@ STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 INPUT_NAME = "pixel_values"
 
 # Keep these in sync with EvidenceWeights.kt (domain module).
-LOW_THRESHOLD = 0.30
-HIGH_THRESHOLD = 0.70
+LOW_THRESHOLD = 0.25
+HIGH_THRESHOLD = 0.90
+
+# Keep these in sync with ModelConfig.CALIBRATION_SLOPE / CALIBRATION_INTERCEPT and the
+# app's two-view ("avg") preprocessing. Pass --calibration app to evaluate the app as shipped.
+APP_CALIBRATION = (0.2252, 0.0494)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 CONDITIONS = ("original", "jpeg75", "social")
@@ -422,14 +426,16 @@ def main() -> None:
     parser.add_argument("--preprocess", default="squash", help=f"Comma-separated subset of {','.join(PREPROCESS_MODES)}")
     parser.add_argument("--dataset-name", default=None, help="Name used in JSON output (default: dataset folder name)")
     parser.add_argument("--json-dir", type=Path, default=None, help="Write one JSON result per combination here")
+    parser.add_argument("--model-name", default=None, help="Label for this configuration in reports")
     parser.add_argument("--scores-csv", type=Path, default=None, help="Append per-image logit differences here")
-    parser.add_argument("--calibration", default=None, help="SLOPE,INTERCEPT applied as in ModelConfig.interpretOutput")
+    parser.add_argument("--calibration", default=None, help="SLOPE,INTERCEPT as in ModelConfig.interpretOutput, or 'app' for the shipped values")
     args = parser.parse_args()
 
     slope, intercept = 1.0, 0.0
     if args.calibration:
         try:
-            slope, intercept = (float(v) for v in args.calibration.split(","))
+            slope, intercept = (APP_CALIBRATION if args.calibration == "app"
+                                else (float(v) for v in args.calibration.split(",")))
         except ValueError:
             parser.error("--calibration must be SLOPE,INTERCEPT, e.g. 0.4,-0.1")
 
@@ -457,13 +463,15 @@ def main() -> None:
         print_report(predictions, args.threshold)
         if args.json_dir:
             payload = {
+                **({"model": args.model_name} if args.model_name else {}),
                 "dataset": dataset_name,
                 "condition": condition,
                 "preprocess": mode,
                 "calibration": {"slope": slope, "intercept": intercept} if args.calibration else None,
                 "metrics": compute_metrics(predictions, args.threshold),
             }
-            out = args.json_dir / f"{dataset_name}__{condition}__{mode}.json"
+            prefix = f"{args.model_name.replace(' ', '_').replace('/', '_')}__" if args.model_name else ""
+            out = args.json_dir / f"{prefix}{dataset_name}__{condition}__{mode}.json"
             out.write_text(json.dumps(payload, indent=2))
 
     if args.scores_csv:

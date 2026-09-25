@@ -15,8 +15,9 @@ Two subcommands:
   fetch   pick a balanced, seeded sample of video files from a Hugging Face dataset
           repo (by path patterns) and download only those. Gated datasets need
           HF_TOKEN in the environment, after accepting the dataset's terms.
-  eval    score every video under <dir>/real/** and <dir>/ai/<generator>/** and write
-          the same JSON/CSV as tools/evaluate.py (preprocess "video5").
+  eval    score every video under <dir>/real/** and <dir>/ai/<generator>/** exactly as
+          the shipped app does (two views per frame, calibrated) and write the same
+          JSON/CSV as tools/evaluate.py (preprocess "video5").
 
 Usage:
     python tools/eval_video.py fetch --repo DF26/DF26 --out eval-video/df26 \\
@@ -46,8 +47,9 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from evaluate import (  # noqa: E402 - share the image pipeline + metrics with evaluate.py
+    APP_CALIBRATION,
     Prediction,
-    _sigmoid,
+    calibrated_probability,
     app_normalize,
     compute_metrics,
     print_report,
@@ -159,9 +161,15 @@ def evaluate_videos(args: argparse.Namespace) -> None:
         if not frames:
             print(f"Skipping undecodable video {path}", file=sys.stderr)
             continue
-        diffs = [run_inference(session, to_tensor(to_model_input(app_normalize(f), "squash"))) for f in frames]
-        # VideoSignalAggregator averages per-frame probabilities (not logits).
-        probability = float(np.mean([_sigmoid(d) for d in diffs]))
+        # Per frame: the app's two views (squash + center crop) averaged in logit space,
+        # then calibrated - exactly AIImageClassifierProvider.
+        diffs = []
+        for frame in frames:
+            normalized = app_normalize(frame)
+            views = [run_inference(session, to_tensor(to_model_input(normalized, m))) for m in ("squash", "center_crop")]
+            diffs.append(sum(views) / 2.0)
+        # VideoSignalAggregator averages per-frame (calibrated) probabilities, not logits.
+        probability = float(np.mean([calibrated_probability(d, *APP_CALIBRATION) for d in diffs]))
         mean_diff = float(np.log(max(probability, 1e-12) / max(1 - probability, 1e-12)))
         predictions.append(Prediction(path, is_ai, probability, generator, mean_diff))
         frame_counts.append(len(frames))

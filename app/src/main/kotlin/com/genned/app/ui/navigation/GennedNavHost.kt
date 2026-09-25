@@ -48,7 +48,10 @@ fun GennedNavHost(navController: NavHostController = rememberNavController()) {
             route = Routes.RESULT_PATTERN,
             arguments = listOf(navArgument("analysisId") { type = NavType.StringType }),
         ) {
-            ResultScreen(onCheckAnother = { navController.popBackStack(Routes.HOME, inclusive = false) })
+            ResultScreen(
+                onCheckAnother = { navController.popBackStack(Routes.HOME, inclusive = false) },
+                onBack = { navController.popBackStack() },
+            )
         }
         composable(Routes.HISTORY) {
             HistoryScreen(

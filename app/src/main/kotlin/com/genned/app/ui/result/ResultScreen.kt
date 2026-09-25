@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.genned.app.R
@@ -45,24 +46,69 @@ import android.graphics.BitmapFactory
 @Composable
 fun ResultScreen(
     onCheckAnother: () -> Unit,
+    onBack: () -> Unit,
     viewModel: ResultViewModel = viewModel(factory = ResultViewModel.Factory),
 ) {
-    val savedAnalysis by viewModel.savedAnalysis.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val analysis = savedAnalysis
-    if (analysis == null) {
-        Column(
+    when (val state = uiState) {
+        ResultUiState.Loading -> Column(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
             CircularProgressIndicator()
         }
-        return
+        ResultUiState.NotFound -> ResultNotFound(onBack = onBack)
+        is ResultUiState.Loaded -> ResultContent(
+            analysis = state.analysis,
+            onShare = {
+                scope.launch {
+                    val card = viewModel.renderShareCard() ?: return@launch
+                    context.startActivity(ShareIntentFactory.forResultCard(context, card))
+                }
+            },
+            onCheckAnother = onCheckAnother,
+        )
     }
+}
 
+@Composable
+private fun ResultNotFound(onBack: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = stringResource(R.string.result_not_found_title),
+            style = MaterialTheme.typography.titleLarge,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = stringResource(R.string.result_not_found_body),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+        Button(onClick = onBack) {
+            Text(text = stringResource(R.string.cd_back))
+        }
+    }
+}
+
+@Composable
+private fun ResultContent(
+    analysis: SavedAnalysis,
+    onShare: () -> Unit,
+    onCheckAnother: () -> Unit,
+) {
     val result = analysis.result
 
     LazyColumn(
@@ -96,15 +142,7 @@ fun ResultScreen(
                 )
             }
             Spacer(modifier = Modifier.height(24.dp))
-            Button(
-                onClick = {
-                    scope.launch {
-                        val card = viewModel.renderShareCard() ?: return@launch
-                        context.startActivity(ShareIntentFactory.forResultCard(context, card))
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
+            Button(onClick = onShare, modifier = Modifier.fillMaxWidth()) {
                 Text(text = stringResource(R.string.result_share))
             }
             Spacer(modifier = Modifier.height(8.dp))

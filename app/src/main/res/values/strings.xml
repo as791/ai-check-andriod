@@ -33,6 +33,8 @@
     <string name="result_error_too_large">This image is too large to analyze on this device.</string>
     <string name="result_error_generic">Something went wrong while analyzing this image. Please try again.</string>
     <string name="result_try_again">Try again</string>
+    <string name="result_not_found_title">This check is no longer available</string>
+    <string name="result_not_found_body">It may have been deleted from your history.</string>
 
     <!-- Signal types -->
     <string name="signal_ai_classifier">Visual AI detector</string>

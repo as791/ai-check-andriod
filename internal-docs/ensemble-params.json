@@ -1,0 +1,110 @@
+{
+  "standardization": {
+    "mean_d": -0.3870831236666665,
+    "std_d": 8.001136403799599,
+    "mean_c": -3.9692556100000003,
+    "std_c": 4.374236289944806
+  },
+  "photo": {
+    "preprocess": "ensemble (photos)",
+    "slope": 3.193504645495846,
+    "intercept": 0.16339470794001099,
+    "auc": {
+      "defactify": 0.9908942222222222,
+      "mj-dalle-sd-nbp": 0.7784106666666667
+    },
+    "high_threshold": 0.9,
+    "low_threshold": 0.15,
+    "high_target_met": true,
+    "low_target_met": true,
+    "worst_real_high": 0.028,
+    "worst_ai_low": 0.1,
+    "real_high_at_app_bands": 0.028,
+    "ai_low_at_app_bands": 0.176,
+    "min_ai_high_at_app_bands": 0.212
+  },
+  "video": {
+    "preprocess": "ensemble (video)",
+    "slope": 3.492133738366617,
+    "intercept": -1.8588067333084148,
+    "auc": {
+      "deepaction": 0.9583,
+      "df26": 0.7464
+    },
+    "high_threshold": 0.85,
+    "low_threshold": 0.15,
+    "high_target_met": true,
+    "low_target_met": true,
+    "worst_real_high": 0.05,
+    "worst_ai_low": 0.09,
+    "real_high_at_app_bands": 0.02,
+    "ai_low_at_app_bands": 0.17,
+    "min_ai_high_at_app_bands": 0.23
+  },
+  "comparison": {
+    "Photos": {
+      "d": {
+        "defactify": {
+          "auc": 0.952,
+          "tpr5": "73.2%"
+        },
+        "mj-dalle-sd-nbp": {
+          "auc": 0.773,
+          "tpr5": "29.7%"
+        }
+      },
+      "c": {
+        "defactify": {
+          "auc": 0.959,
+          "tpr5": "83.3%"
+        },
+        "mj-dalle-sd-nbp": {
+          "auc": 0.654,
+          "tpr5": "22.8%"
+        }
+      },
+      "s": {
+        "defactify": {
+          "auc": 0.991,
+          "tpr5": "94.8%"
+        },
+        "mj-dalle-sd-nbp": {
+          "auc": 0.778,
+          "tpr5": "33.9%"
+        }
+      }
+    },
+    "Video": {
+      "d": {
+        "deepaction": {
+          "auc": 0.793,
+          "tpr5": "41.0%"
+        },
+        "df26": {
+          "auc": 0.651,
+          "tpr5": "21.0%"
+        }
+      },
+      "c": {
+        "deepaction": {
+          "auc": 0.97,
+          "tpr5": "70.0%"
+        },
+        "df26": {
+          "auc": 0.743,
+          "tpr5": "33.0%"
+        }
+      },
+      "s": {
+        "deepaction": {
+          "auc": 0.958,
+          "tpr5": "82.0%"
+        },
+        "df26": {
+          "auc": 0.746,
+          "tpr5": "30.0%"
+        }
+      }
+    }
+  }
+}

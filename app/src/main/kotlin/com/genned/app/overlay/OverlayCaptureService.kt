@@ -25,6 +25,8 @@ import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
@@ -86,6 +88,8 @@ class OverlayCaptureService : Service() {
     private var screenWidth = 0
     private var screenHeight = 0
     private var screenDensity = 0
+    private var screenTopInset = 0
+    private var screenBottomInset = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -195,6 +199,15 @@ class OverlayCaptureService : Service() {
         screenWidth = metrics.widthPixels
         screenHeight = metrics.heightPixels
         screenDensity = metrics.densityDpi
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val insets = windowManager.currentWindowMetrics.windowInsets
+                .getInsetsIgnoringVisibility(WindowInsets.Type.systemBars())
+            screenTopInset = insets.top
+            screenBottomInset = insets.bottom
+        } else {
+            screenTopInset = 0
+            screenBottomInset = 0
+        }
 
         val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         val projection = projectionManager.getMediaProjection(resultCode, data)
@@ -349,23 +362,35 @@ class OverlayCaptureService : Service() {
         if (analysisJob?.isActive == true) return
 
         val reader = captureReader ?: return
-        bubble.state = BubbleState.ANALYZING
-        bubble.startAnalyzingAnimation()
 
         analysisJob = serviceScope.launch {
-            val capturedFile = runCatching { captureFrame(reader) }.getOrNull()
+            // Hide the bubble so it isn't part of the frame being classified.
+            bubble.visibility = View.INVISIBLE
+            val capturedFile = try {
+                // Drop any frame queued while the bubble was still drawn.
+                runCatching { reader.acquireLatestImage()?.close() }
+                delay(CAPTURE_SETTLE_MS)
+                runCatching { captureFrame(reader) }.getOrNull()
+            } finally {
+                // watchForegroundApp may have set GONE meanwhile; don't override that.
+                if (bubble.visibility == View.INVISIBLE) bubble.visibility = View.VISIBLE
+            }
+            bubble.state = BubbleState.ANALYZING
+            bubble.startAnalyzingAnimation()
+
             if (capturedFile == null) {
                 showTransientError(bubble)
                 return@launch
             }
 
+            val cropSize = captureCrop()[2]
             val container = (application as GennedApplication).container
             val input = AnalysisInput(
                 originalFilePath = capturedFile.absolutePath,
                 normalizedFilePath = capturedFile.absolutePath,
                 originalMimeType = "image/jpeg",
-                widthPx = screenWidth,
-                heightPx = screenHeight,
+                widthPx = cropSize,
+                heightPx = cropSize,
                 fileSizeBytes = capturedFile.length(),
             )
 
@@ -420,7 +445,8 @@ class OverlayCaptureService : Service() {
                 Bitmap.Config.ARGB_8888,
             )
             rawBitmap.copyPixelsFromBuffer(buffer)
-            val cropped = Bitmap.createBitmap(rawBitmap, 0, 0, screenWidth, screenHeight)
+            val (left, top, size) = captureCrop()
+            val cropped = Bitmap.createBitmap(rawBitmap, left, top, size, size)
             if (cropped !== rawBitmap) rawBitmap.recycle()
 
             val outDir = File(cacheDir, "shared").apply { mkdirs() }
@@ -432,6 +458,9 @@ class OverlayCaptureService : Service() {
             img.close()
         }
     }
+
+    private fun captureCrop(): IntArray =
+        CaptureCrop.contentSquare(screenWidth, screenHeight, screenTopInset, screenBottomInset)
 
     private fun colorFor(classification: Classification): Int = when (classification) {
         Classification.HIGH -> Color.parseColor("#D8342A")
@@ -480,6 +509,7 @@ class OverlayCaptureService : Service() {
         private const val RESULT_DISPLAY_MS = 6_000L
         private const val FRAME_POLL_ATTEMPTS = 10
         private const val FRAME_POLL_DELAY_MS = 80L
+        private const val CAPTURE_SETTLE_MS = 120L
         private const val TAG = "OverlayCaptureService"
 
         private val _running = MutableStateFlow(false)

@@ -34,7 +34,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        handleIntent(intent)
+        // On recreation getIntent() is still the original share; the restored back stack already reflects it.
+        if (savedInstanceState == null) handleIntent(intent)
 
         setContent {
             GennedTheme {

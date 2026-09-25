@@ -1,0 +1,71 @@
+name: Model compare
+
+# Benchmarks candidate replacement detectors (tools/eval_candidates.py) against the
+# bundled model on the same images, conditions and metrics as `Model eval`.
+# Manual only; downloads each candidate from Hugging Face inside the runner.
+# Only numbers are uploaded, never images. See internal-docs/MODEL.md.
+on:
+  workflow_dispatch:
+    inputs:
+      samples_per_class:
+        description: Images per class (real / AI) per dataset
+        default: '250'
+      candidates:
+        description: Comma-separated candidate names (see CANDIDATES in tools/eval_candidates.py)
+        default: 'commfor-384,commfor-224,ateeqq-siglip,dima806-vit'
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies (CPU-only torch)
+        run: |
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install "onnxruntime>=1.18,<2" "pillow>=10,<12" "numpy>=1.26,<3" "datasets>=2.19,<5" \
+            "timm>=1.0,<2" "transformers>=4.44,<5" "huggingface_hub>=0.23,<1"
+
+      - name: Fetch datasets
+        run: tools/fetch_all_eval_data.sh ${{ inputs.samples_per_class }}
+
+      - name: Evaluate bundled model + candidates
+        run: |
+          mkdir -p eval-results
+          for dir in eval-data/*/; do
+            name="$(basename "$dir")"
+            echo "::group::bundled | $name"
+            python tools/evaluate.py \
+              --model app/src/main/assets/models/ai-image-detector.onnx \
+              --dataset "$dir" --dataset-name "$name" \
+              --conditions original,jpeg75,social --preprocess squash \
+              --json-dir eval-results || echo "::warning::bundled evaluation failed for $name"
+            echo "::endgroup::"
+            echo "::group::candidates | $name"
+            python tools/eval_candidates.py \
+              --dataset "$dir" --dataset-name "$name" \
+              --candidates "${{ inputs.candidates }}" \
+              --json-dir eval-results --scores-csv eval-results/candidate-scores.csv \
+              || echo "::warning::candidate evaluation failed for $name"
+            echo "::endgroup::"
+          done
+
+      - name: Report
+        if: always()
+        run: |
+          mkdir -p eval-results
+          python tools/eval_report.py eval-results > eval-results/report.md
+          cat eval-results/report.md >> "$GITHUB_STEP_SUMMARY"
+          cat eval-results/report.md
+
+      - name: Upload results (numbers only, no images)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-compare-results
+          path: eval-results/

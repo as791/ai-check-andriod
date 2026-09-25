@@ -12,7 +12,8 @@ import sys
 from pathlib import Path
 
 CONDITION_ORDER = {"original": 0, "jpeg75": 1, "social": 2}
-PREPROCESS_ORDER = {"squash": 0, "center_crop": 1, "avg": 2}
+PREPROCESS_ORDER = {"squash": 0, "center_crop": 1, "avg": 2, "native": 3}
+BUNDLED = "dafilab (bundled)"
 
 
 def pct(value: float | None) -> str:
@@ -28,11 +29,14 @@ def main() -> None:
         print(__doc__, file=sys.stderr)
         sys.exit(1)
     results = [json.loads(p.read_text()) for p in sorted(Path(sys.argv[1]).glob("*.json"))]
+    results = [r for r in results if "metrics" in r]  # skip e.g. calibration.json
+    for r in results:
+        r.setdefault("model", BUNDLED)
     if not results:
         print("No results found - every dataset fetch or evaluation failed; see the job log.")
         return
-    results.sort(key=lambda r: (r["dataset"], CONDITION_ORDER.get(r["condition"], 9),
-                                PREPROCESS_ORDER.get(r["preprocess"], 9)))
+    results.sort(key=lambda r: (r["dataset"], r["model"] != BUNDLED, r["model"],
+                                CONDITION_ORDER.get(r["condition"], 9), PREPROCESS_ORDER.get(r["preprocess"], 9)))
 
     out = []
     out.append("# Genned detector accuracy benchmark\n")
@@ -43,27 +47,28 @@ def main() -> None:
                "Treat a dataset that scores far better than the others with suspicion.\n")
 
     out.append("## Overall\n")
-    out.append("| Dataset | Condition | Preprocess | n (AI/real) | AUC | Accuracy | FPR (real→AI) | FNR (AI missed) "
-               "| Real shown HIGH | AI shown LOW | ECE | Scores >99% or <1% |")
-    out.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
+    out.append("| Dataset | Model | Condition | Preprocess | n (AI/real) | AUC | Accuracy | FPR (real→AI) "
+               "| FNR (AI missed) | Real shown HIGH | AI shown LOW | ECE | Scores >99% or <1% |")
+    out.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for r in results:
         m = r["metrics"]
         out.append(
-            f"| {r['dataset']} | {r['condition']} | {r['preprocess']} | {m['n_ai']}/{m['n_real']} "
+            f"| {r['dataset']} | {r['model']} | {r['condition']} | {r['preprocess']} | {m['n_ai']}/{m['n_real']} "
             f"| {num(m['auc'])} | {pct(m['accuracy'])} | {pct(m['fpr'])} | {pct(m['fnr'])} "
             f"| {pct(m['bands_real']['high'])} | {pct(m['bands_ai']['low'])} | {num(m['ece'])} "
             f"| {pct(m['extreme_share'])} |"
         )
 
-    out.append("\n## Per generator (app preprocessing: squash)\n")
+    out.append("\n## Per generator (bundled: squash; candidates: native)\n")
     out.append("Share classified correctly at 0.5 (for `real`: share *not* flagged as AI).\n")
-    for dataset in sorted({r["dataset"] for r in results}):
-        rows = [r for r in results if r["dataset"] == dataset and r["preprocess"] == "squash"]
+    for dataset, model in sorted({(r["dataset"], r["model"]) for r in results}, key=lambda k: (k[0], k[1] != BUNDLED, k[1])):
+        rows = [r for r in results if r["dataset"] == dataset and r["model"] == model
+                and r["preprocess"] in ("squash", "native")]
         if not rows:
             continue
         generators = sorted({g for r in rows for g in r["metrics"]["per_generator"]},
                             key=lambda g: (g != "real", g))
-        out.append(f"### {dataset}\n")
+        out.append(f"### {dataset} · {model}\n")
         out.append("| Generator | " + " | ".join(r["condition"] for r in rows) + " |")
         out.append("|---|" + "---|" * len(rows))
         for g in generators:
@@ -77,9 +82,9 @@ def main() -> None:
     out.append("## Calibration (original, squash)\n")
     out.append("When the model says X%, how often is the image actually AI?\n")
     for r in results:
-        if r["condition"] != "original" or r["preprocess"] != "squash":
+        if r["condition"] != "original" or r["preprocess"] not in ("squash", "native"):
             continue
-        out.append(f"### {r['dataset']}\n")
+        out.append(f"### {r['dataset']} · {r['model']}\n")
         out.append("| Score bin | n | Mean score | Actually AI |")
         out.append("|---|---|---|---|")
         for b in r["metrics"]["reliability"]:

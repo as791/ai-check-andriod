@@ -26,30 +26,8 @@ jobs:
       - name: Install evaluation dependencies (CPU only, no torch)
         run: pip install "onnxruntime>=1.18,<2" "pillow>=10,<12" "numpy>=1.26,<3" "datasets>=2.19,<5"
 
-      # Defactify: MS-COCO real photos + SD 2.1 / SDXL / SD3 / DALL-E 3 / Midjourney v6
-      # made from the same captions. Label_A = real/AI, Label_B = source id. The id -> name
-      # order below follows the dataset card's listing order; fetch_eval_data.py fails if
-      # Label_A and Label_B ever disagree about which images are real.
-      - name: Fetch Defactify sample
-        continue-on-error: true
-        run: >
-          python tools/fetch_eval_data.py
-          --dataset Rajarshi-Roy-research/Defactify_Image_Dataset
-          --out eval-data/defactify
-          --per-class ${{ inputs.samples_per_class }}
-          --label-col Label_A --ai-values 1 --real-values 0
-          --generator-col Label_B
-          --generator-names real,sd21,sdxl,sd3,dalle3,midjourney6
-
-      # Midjourney / DALL-E / SD / Nano Banana Pro vs real (labels auto-detected from the
-      # dataset's ClassLabel names; fails loudly if they're ambiguous).
-      - name: Fetch Midjourney/DALL-E/SD/Nano Banana Pro sample
-        continue-on-error: true
-        run: >
-          python tools/fetch_eval_data.py
-          --dataset julienlucas/midjourney-dalle-sd-nanobananapro-dataset
-          --out eval-data/mj-dalle-sd-nbp
-          --per-class ${{ inputs.samples_per_class }}
+      - name: Fetch datasets
+        run: tools/fetch_all_eval_data.sh ${{ inputs.samples_per_class }}
 
       - name: Evaluate
         run: |

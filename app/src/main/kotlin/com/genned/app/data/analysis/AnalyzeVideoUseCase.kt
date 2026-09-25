@@ -41,41 +41,43 @@ class AnalyzeVideoUseCase(
     ): Pair<Long, AnalysisResult> {
         onStage(AnalysisStage.SAMPLING_FRAMES)
         val frames = frameSampler.sampleFrames(videoUri)
-        val middleFrame = frames[frames.size / 2]
-        onPreview(middleFrame.file.absolutePath)
+        try {
+            val middleFrame = frames[frames.size / 2]
+            onPreview(middleFrame.file.absolutePath)
 
-        onStage(AnalysisStage.VISUAL)
-        val perFrameSignals = coroutineScope {
-            frames.map { frame -> async { analyzeFrame(frame) } }.awaitAll()
+            onStage(AnalysisStage.VISUAL)
+            val perFrameSignals = coroutineScope {
+                frames.map { frame -> async { analyzeFrame(frame) } }.awaitAll()
+            }
+            val classifierSignal = VideoSignalAggregator.aggregateFrameSignals(perFrameSignals)
+            val watermarkSignal = runCatching { watermarkProvider.analyze(frameInput(middleFrame)) }
+                .getOrElse { DetectionSignal.error(watermarkProvider.signalType, "This detector failed unexpectedly.") }
+
+            val signals = listOf(
+                classifierSignal,
+                watermarkSignal,
+                DetectionSignal.unavailable(
+                    SignalType.GENERATOR_METADATA,
+                    "Metadata inspection is not yet implemented for video files.",
+                ),
+                DetectionSignal.unavailable(
+                    SignalType.EXIF_METADATA,
+                    "Metadata inspection is not yet implemented for video files.",
+                ),
+                DetectionSignal.unavailable(
+                    SignalType.CONTENT_CREDENTIALS,
+                    "Content Credentials checking is not enabled in this build.",
+                ),
+            )
+
+            val baseResult = evidenceEngine.aggregate(signals)
+            val result = baseResult.copy(limitations = baseResult.limitations + videoLimitation(frames.size))
+
+            val analysisId = historyRepository.save(result, middleFrame.file)
+            return analysisId to result
+        } finally {
+            frames.forEach { it.file.delete() }
         }
-        val classifierSignal = VideoSignalAggregator.aggregateFrameSignals(perFrameSignals)
-        val watermarkSignal = runCatching { watermarkProvider.analyze(frameInput(middleFrame)) }
-            .getOrElse { DetectionSignal.error(watermarkProvider.signalType, "This detector failed unexpectedly.") }
-
-        val signals = listOf(
-            classifierSignal,
-            watermarkSignal,
-            DetectionSignal.unavailable(
-                SignalType.GENERATOR_METADATA,
-                "Metadata inspection is not yet implemented for video files.",
-            ),
-            DetectionSignal.unavailable(
-                SignalType.EXIF_METADATA,
-                "Metadata inspection is not yet implemented for video files.",
-            ),
-            DetectionSignal.unavailable(
-                SignalType.CONTENT_CREDENTIALS,
-                "Content Credentials checking is not enabled in this build.",
-            ),
-        )
-
-        val baseResult = evidenceEngine.aggregate(signals)
-        val result = baseResult.copy(limitations = baseResult.limitations + videoLimitation(frames.size))
-
-        val analysisId = historyRepository.save(result, middleFrame.file)
-        frames.forEach { it.file.delete() }
-
-        return analysisId to result
     }
 
     private suspend fun analyzeFrame(frame: SampledFrame): DetectionSignal =

@@ -27,7 +27,18 @@ data class SampledFrame(val file: File, val widthPx: Int, val heightPx: Int)
  */
 class VideoFrameSampler(private val context: Context) {
 
-    suspend fun sampleFrames(uri: Uri): List<SampledFrame> = withContext(Dispatchers.IO) {
+    suspend fun sampleFrames(uri: Uri): List<SampledFrame> {
+        // Tracked outside withContext: a cancelled withContext discards its result on return.
+        val frames = mutableListOf<SampledFrame>()
+        try {
+            return withContext(Dispatchers.IO) { sampleInto(uri, frames) }
+        } catch (t: Throwable) {
+            frames.forEach { it.file.delete() }
+            throw t
+        }
+    }
+
+    private fun sampleInto(uri: Uri, frames: MutableList<SampledFrame>): List<SampledFrame> {
         val retriever = MediaMetadataRetriever()
         try {
             try {
@@ -46,7 +57,6 @@ class VideoFrameSampler(private val context: Context) {
                 throw VideoLoadException.TooLong()
             }
 
-            val frames = mutableListOf<SampledFrame>()
             for (i in 0 until FRAME_COUNT) {
                 // Evenly spaced across the clip, avoiding the very first/last instants
                 // where a fade-in/out or a black frame is more likely.
@@ -58,7 +68,7 @@ class VideoFrameSampler(private val context: Context) {
             }
 
             if (frames.isEmpty()) throw VideoLoadException.Unsupported()
-            frames
+            return frames
         } finally {
             retriever.release()
         }
@@ -67,7 +77,12 @@ class VideoFrameSampler(private val context: Context) {
     private fun saveFrame(rawBitmap: Bitmap): SampledFrame {
         val bounded = downscaleIfNeeded(rawBitmap, MAX_FRAME_DIMENSION)
         val outFile = File(sharedCacheDir(context), "frame_${UUID.randomUUID()}.jpg")
-        FileOutputStream(outFile).use { out -> bounded.compress(Bitmap.CompressFormat.JPEG, 90, out) }
+        try {
+            FileOutputStream(outFile).use { out -> bounded.compress(Bitmap.CompressFormat.JPEG, 90, out) }
+        } catch (t: Throwable) {
+            outFile.delete()
+            throw t
+        }
         val width = bounded.width
         val height = bounded.height
         if (bounded !== rawBitmap) bounded.recycle()

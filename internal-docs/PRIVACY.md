@@ -27,6 +27,8 @@
   copies during analysis, and generated result-card PNGs for the share sheet.
   Exposed to other apps *only* via short-lived `FileProvider` grants when you
   explicitly tap "Share Result" — never any other file in the app's storage.
+  Leftovers from failed or cancelled checks, and old share cards, are swept on the
+  next app start (files older than 15 minutes).
 
 `android:allowBackup="false"` and explicit `dataExtractionRules`/`fullBackupContent`
 exclusions mean none of this is included in Android's automatic cloud backup.

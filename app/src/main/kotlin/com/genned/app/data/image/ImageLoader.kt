@@ -39,10 +39,22 @@ data class NormalizedImage(
  */
 class ImageLoader(private val context: Context) {
 
-    suspend fun normalize(uri: Uri): NormalizedImage = withContext(Dispatchers.IO) {
+    suspend fun normalize(uri: Uri): NormalizedImage {
+        // Tracked outside withContext: a cancelled withContext discards its result on return.
+        val createdFiles = mutableListOf<File>()
+        try {
+            return withContext(Dispatchers.IO) { normalizeInto(uri, createdFiles) }
+        } catch (t: Throwable) {
+            createdFiles.forEach { it.delete() }
+            throw t
+        }
+    }
+
+    private fun normalizeInto(uri: Uri, createdFiles: MutableList<File>): NormalizedImage {
         val mimeType = context.contentResolver.getType(uri)
 
         val originalFile = copyOriginalBytes(uri, mimeType)
+        createdFiles += originalFile
 
         val bounds = decodeBounds(originalFile)
         // A guard against decompression-bomb-style inputs (e.g. a 1px-tall, 200000px
@@ -65,6 +77,7 @@ class ImageLoader(private val context: Context) {
         val boundedBitmap = downscaleIfNeeded(orientedBitmap, MAX_DIMENSION_PX)
 
         val outFile = File(sharedCacheDir(context), "normalized_${UUID.randomUUID()}.jpg")
+        createdFiles += outFile
         FileOutputStream(outFile).use { out ->
             boundedBitmap.compress(Bitmap.CompressFormat.JPEG, 92, out)
         }
@@ -74,7 +87,7 @@ class ImageLoader(private val context: Context) {
         if (orientedBitmap !== rawBitmap) rawBitmap.recycle()
         boundedBitmap.recycle()
 
-        NormalizedImage(
+        return NormalizedImage(
             originalFile = originalFile,
             normalizedFile = outFile,
             widthPx = width,
@@ -112,7 +125,11 @@ class ImageLoader(private val context: Context) {
                 }
             } ?: throw ImageLoadException.Unsupported()
         } catch (io: IOException) {
+            originalFile.delete()
             throw ImageLoadException.Corrupt()
+        } catch (t: Throwable) {
+            originalFile.delete()
+            throw t
         }
         return originalFile
     }

@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.text.StaticLayout
 import android.text.TextPaint
+import com.genned.app.R
 import com.genned.domain.model.AnalysisResult
 import com.genned.domain.model.Classification
 import com.genned.domain.model.SignalAvailability
@@ -138,11 +139,13 @@ class ResultCardRenderer(private val context: Context) {
         )
     }
 
-    private fun classificationLabel(classification: Classification): String = when (classification) {
-        Classification.HIGH -> "LIKELY AI-GENERATED"
-        Classification.UNCERTAIN -> "UNCERTAIN"
-        Classification.LOW -> "LOW AI LIKELIHOOD"
-    }
+    private fun classificationLabel(classification: Classification): String = context.getString(
+        when (classification) {
+            Classification.HIGH -> R.string.result_classification_high
+            Classification.UNCERTAIN -> R.string.result_classification_uncertain
+            Classification.LOW -> R.string.result_classification_low
+        },
+    )
 
     private fun classificationColor(classification: Classification): Int = when (classification) {
         Classification.HIGH -> Color.parseColor("#FF6B5E")

@@ -383,19 +383,22 @@ class OverlayCaptureService : Service() {
                 return@launch
             }
 
-            val cropSize = captureCrop()[2]
-            val container = (application as GennedApplication).container
-            val input = AnalysisInput(
-                originalFilePath = capturedFile.absolutePath,
-                normalizedFilePath = capturedFile.absolutePath,
-                originalMimeType = "image/jpeg",
-                widthPx = cropSize,
-                heightPx = cropSize,
-                fileSizeBytes = capturedFile.length(),
-            )
-
-            val outcome = runCatching { container.analyzeImageUseCase.run(input, capturedFile) { } }
-            capturedFile.delete()
+            // finally, so the screen capture is removed even if the service stops mid-analysis.
+            val outcome = try {
+                val cropSize = captureCrop()[2]
+                val container = (application as GennedApplication).container
+                val input = AnalysisInput(
+                    originalFilePath = capturedFile.absolutePath,
+                    normalizedFilePath = capturedFile.absolutePath,
+                    originalMimeType = "image/jpeg",
+                    widthPx = cropSize,
+                    heightPx = cropSize,
+                    fileSizeBytes = capturedFile.length(),
+                )
+                runCatching { container.analyzeImageUseCase.run(input, capturedFile) { } }
+            } finally {
+                capturedFile.delete()
+            }
             val (analysisId, result) = outcome.getOrNull() ?: run {
                 showTransientError(bubble)
                 return@launch

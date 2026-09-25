@@ -15,6 +15,9 @@ on:
 jobs:
   evaluate:
     runs-on: ubuntu-latest
+    env:
+      # Optional: authenticated Hugging Face requests (higher rate limits).
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4

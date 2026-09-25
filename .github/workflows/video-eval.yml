@@ -12,12 +12,15 @@ on:
     inputs:
       videos_per_class:
         description: Videos per class (real / AI) per dataset
-        default: '60'
+        default: '100'
+      candidates:
+        description: Candidate models to score on the same frames (tools/eval_candidates.py)
+        default: 'commfor-384,commfor-224,ateeqq-siglip,dima806-vit'
 
 jobs:
   evaluate:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 240
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
     steps:
@@ -34,8 +37,11 @@ jobs:
             exit 1
           fi
 
-      - name: Install dependencies
-        run: pip install "onnxruntime>=1.18,<2" "pillow>=10,<12" "numpy>=1.26,<3" "huggingface_hub>=0.23,<1" opencv-python-headless
+      - name: Install dependencies (CPU-only torch for the candidates)
+        run: |
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install "onnxruntime>=1.18,<2" "pillow>=10,<12" "numpy>=1.26,<3" "huggingface_hub>=0.23,<1" \
+            opencv-python-headless "timm>=1.0,<2" "transformers>=4.44,<5"
 
       # DF26 (2026): talking-head public-speaking clips from 7 recent T2V/I2V models vs real.
       - name: Fetch DF26 sample
@@ -66,6 +72,7 @@ jobs:
               --model app/src/main/assets/models/ai-image-detector.onnx \
               --dataset "$dir" --dataset-name "$name" \
               --json-dir eval-results --scores-csv eval-results/video-scores.csv \
+              --candidates "${{ inputs.candidates }}" \
               || echo "::warning::video evaluation failed for $name"
             echo "::endgroup::"
           done
@@ -75,6 +82,14 @@ jobs:
         run: |
           mkdir -p eval-results
           python tools/eval_report.py eval-results > eval-results/report.md
+          if [ -f eval-results/video-scores.csv ]; then
+            # Video calibration for the app's own model (per-video mean frame logit gap).
+            python tools/calibrate.py eval-results/video-scores.csv --model "app as shipped" --preprocess video5 \
+              --json eval-results/video-calibration.json >> eval-results/report.md || echo "::warning::video calibration failed"
+            # Which models / combinations work on video.
+            python tools/ensemble.py eval-results/video-scores.csv --json eval-results/video-ensemble.json \
+              >> eval-results/report.md || echo "::warning::video ensemble analysis failed"
+          fi
           cat eval-results/report.md >> "$GITHUB_STEP_SUMMARY"
           cat eval-results/report.md
 

@@ -42,7 +42,7 @@ from evaluate import (  # noqa: E402 - shared conditions/metrics keep results co
 )
 
 AI_WORDS = ("ai", "fake", "artificial", "generated", "synthetic")
-REAL_WORDS = ("real", "human", "authentic", "natural")
+REAL_WORDS = ("real", "human", "hum", "authentic", "natural")
 
 
 class Candidate:
@@ -150,7 +150,7 @@ class HFClassifier(Candidate):
         labels = {int(k): v for k, v in self.model.config.id2label.items()}
         print(f"{self.name}: labels {labels}")
         if len(labels) != 2:
-            raise SystemExit(f"{self.name}: expected 2 labels, got {labels}")
+            raise ValueError(f"{self.name}: expected 2 labels, got {labels}")
 
         def kind(label: str) -> str | None:
             tokens = set("".join(c if c.isalnum() else " " for c in label.lower()).split())
@@ -159,7 +159,7 @@ class HFClassifier(Candidate):
 
         kinds = {i: kind(l) for i, l in labels.items()}
         if sorted(k for k in kinds.values() if k) != ["ai", "real"]:
-            raise SystemExit(f"{self.name}: can't tell which label is AI from {labels}")
+            raise ValueError(f"{self.name}: can't tell which label is AI from {labels}")
         self.ai_index = next(i for i, k in kinds.items() if k == "ai")
         self.real_index = next(i for i, k in kinds.items() if k == "real")
 
@@ -235,17 +235,21 @@ def main() -> None:
         print(f"=== {name} ({candidate.hub_id}, license: {candidate.license}) on {dataset_name} ===", flush=True)
         try:
             candidate.load()
-        except Exception as e:  # noqa: BLE001 - one broken candidate must not sink the comparison
-            print(f"::warning::{name} failed to load: {e}")
+        except (Exception, SystemExit) as e:  # noqa: BLE001 - one broken candidate must not sink the comparison
+            print(f"::warning::{name} failed to load: {e!r}")
             continue
 
         results: dict[str, list[Prediction]] = {c: [] for c in conditions}
-        for index, (path, is_ai, generator, degraded) in enumerate(inputs, start=1):
-            for condition, image in degraded.items():
-                d = candidate.logit_diff(image)
-                results[condition].append(Prediction(path, is_ai, calibrated_probability(d), generator, d))
-            if index % 100 == 0:
-                print(f"  {index}/{len(inputs)}", file=sys.stderr, flush=True)
+        try:
+            for index, (path, is_ai, generator, degraded) in enumerate(inputs, start=1):
+                for condition, image in degraded.items():
+                    d = candidate.logit_diff(image)
+                    results[condition].append(Prediction(path, is_ai, calibrated_probability(d), generator, d))
+                if index % 100 == 0:
+                    print(f"  {index}/{len(inputs)}", file=sys.stderr, flush=True)
+        except (Exception, SystemExit) as e:  # noqa: BLE001
+            print(f"::warning::{name} failed during inference: {e!r}")
+            continue
 
         for condition, predictions in results.items():
             print(f"--- {name} | {dataset_name} | {condition} ---")

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -211,3 +212,10 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    # Everything is on disk. Exit without interpreter finalization: the `datasets`
+    # streaming worker threads can abort there ("PyGILState_Release ... must be
+    # current"), turning a successful fetch into a core dump and a spurious
+    # "fetch failed" warning in CI.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)

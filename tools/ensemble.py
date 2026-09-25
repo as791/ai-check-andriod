@@ -42,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from calibrate import auc  # noqa: E402
 
 # Which preprocessing represents each model as it would run in the app.
-SHIPPED_PREPROCESS = {"avg", "native"}
+SHIPPED_PREPROCESS = {"avg", "native", "video5"}
 
 
 def load(paths: list[Path]) -> tuple[list[str], dict[str, dict]]:

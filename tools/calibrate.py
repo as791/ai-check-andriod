@@ -110,10 +110,12 @@ def extreme_share(p: np.ndarray) -> float:
     return float(((p > 0.99) | (p < 0.01)).mean())
 
 
-def load(path: Path) -> dict[str, list[dict]]:
+def load(path: Path, model: str | None = None) -> dict[str, list[dict]]:
     by_mode: dict[str, list[dict]] = defaultdict(list)
     with path.open() as f:
         for row in csv.DictReader(f):
+            if model is not None and row.get("model") != model:
+                continue
             row["is_ai"] = int(row["is_ai"])
             row["logit_diff"] = float(row["logit_diff"])
             by_mode[row["preprocess"]].append(row)
@@ -219,13 +221,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("scores_csv", type=Path)
     parser.add_argument("--preprocess", default=None, help="Only analyze this mode (default: every mode present)")
+    parser.add_argument("--model", default=None, help="Only rows for this model (CSV 'model' column)")
     parser.add_argument("--max-real-high", type=float, default=0.05)
     parser.add_argument("--max-ai-low", type=float, default=0.10)
     parser.add_argument("--min-gap", type=float, default=0.20, help="Minimum width of the UNCERTAIN band")
     parser.add_argument("--json", type=Path, default=None)
     args = parser.parse_args()
 
-    by_mode = load(args.scores_csv)
+    by_mode = load(args.scores_csv, args.model)
     if args.preprocess:
         by_mode = {args.preprocess: by_mode.get(args.preprocess, [])}
     if not any(by_mode.values()):

@@ -11,6 +11,9 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from evaluate import HIGH_THRESHOLD, LOW_THRESHOLD  # noqa: E402 - keep the report in sync with the app bands
+
 CONDITION_ORDER = {"original": 0, "jpeg75": 1, "social": 2, "video": 3}
 PREPROCESS_ORDER = {"squash": 0, "center_crop": 1, "avg": 2, "native": 3, "video5": 4}
 BUNDLED = "dafilab (bundled)"
@@ -42,7 +45,8 @@ def main() -> None:
     out.append("# Genned detector accuracy benchmark\n")
     out.append("Model: bundled `Dafilab/ai-image-detector` ONNX export. `squash` = what the app does today; "
                "`social` = long edge ≤1080 + JPEG q75 (Instagram re-upload). Every condition then gets the app's own normalization (long edge ≤2048, JPEG q92), as on-device. "
-               "Threshold 0.5 for accuracy/FPR/FNR; bands use the app's LOW <30% / HIGH ≥70%.\n")
+               f"Threshold 0.5 for accuracy/FPR/FNR; bands use the app's LOW <{LOW_THRESHOLD:.0%} / "
+               f"HIGH ≥{HIGH_THRESHOLD:.0%} (meaningful for calibrated rows such as 'app as shipped').\n")
     out.append("> If the model was trained on one of these datasets, its numbers there are inflated. "
                "Treat a dataset that scores far better than the others with suspicion.\n")
 

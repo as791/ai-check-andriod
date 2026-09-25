@@ -138,10 +138,12 @@ def main() -> None:
                 row["int8_max_diff"] = max(abs(a - b) for a, b in zip(onnx_diffs, q_diffs))
             except Exception as e:  # noqa: BLE001
                 row["int8_error"] = str(e)[:200]
-        except Exception as e:  # noqa: BLE001 - one failed export must not hide the others
-            row["error"] = str(e)[:300]
-            print(f"::warning::{name} ONNX export/verify failed: {e}", file=sys.stderr)
+        except (Exception, SystemExit) as e:  # noqa: BLE001 - one failed export must not hide the others
+            row["error"] = repr(e)[:300]
+            print(f"::warning::{name} ONNX export/verify failed: {e!r}", file=sys.stderr)
         rows.append(row)
+        if args.json:  # write as we go so a later crash can't lose finished rows
+            args.json.write_text(json.dumps(rows, indent=2))
 
     def fmt(value, spec=".1f"):
         return "–" if value is None else format(value, spec)

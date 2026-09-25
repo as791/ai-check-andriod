@@ -48,6 +48,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from evaluate import (  # noqa: E402 - share the image pipeline + metrics with evaluate.py
     APP_CALIBRATION,
+    APP_VIDEO_CALIBRATION,
     Prediction,
     calibrated_probability,
     app_normalize,
@@ -154,45 +155,76 @@ def evaluate_videos(args: argparse.Namespace) -> None:
     if not labeled:
         raise SystemExit(f"No videos under {ai_dir} or {real_dir}")
 
-    predictions: list[Prediction] = []
+    name = args.dataset_name or args.dataset.resolve().name
+    candidates = []
+    if args.candidates:
+        from eval_candidates import CANDIDATES
+
+        for candidate_name in [c for c in args.candidates.split(",") if c]:
+            candidate = CANDIDATES[candidate_name]
+            try:
+                candidate.load()
+                candidates.append(candidate)
+            except (Exception, SystemExit) as e:  # noqa: BLE001 - one broken candidate must not sink the run
+                print(f"::warning::{candidate_name} failed to load: {e!r}")
+
+    # model label -> predictions. "app as shipped" mirrors the app; candidates use raw sigmoid.
+    predictions: dict[str, list[Prediction]] = defaultdict(list)
     frame_counts = []
     for index, (path, is_ai, generator) in enumerate(labeled, start=1):
-        frames = sample_frames(path)
+        frames = sample_frames(path)  # decoded once, shared by every model
         if not frames:
             print(f"Skipping undecodable video {path}", file=sys.stderr)
             continue
-        # Per frame: the app's two views (squash + center crop) averaged in logit space,
-        # then calibrated - exactly AIImageClassifierProvider.
-        diffs = []
-        for frame in frames:
-            normalized = app_normalize(frame)
-            views = [run_inference(session, to_tensor(to_model_input(normalized, m))) for m in ("squash", "center_crop")]
-            diffs.append(sum(views) / 2.0)
-        # VideoSignalAggregator averages per-frame (calibrated) probabilities, not logits.
-        probability = float(np.mean([calibrated_probability(d, *APP_CALIBRATION) for d in diffs]))
-        mean_diff = float(np.log(max(probability, 1e-12) / max(1 - probability, 1e-12)))
-        predictions.append(Prediction(path, is_ai, probability, generator, mean_diff))
+        normalized = [app_normalize(frame) for frame in frames]
         frame_counts.append(len(frames))
+
+        # The app: per frame, two views (squash + center crop) averaged in logit space.
+        gaps = [sum(run_inference(session, to_tensor(to_model_input(f, m))) for m in ("squash", "center_crop")) / 2.0
+                for f in normalized]
+        mean_gap = float(np.mean(gaps))
+        if args.video_calibration:
+            # Proposed/shipped video path: mean frame logit gap -> video calibration.
+            probability = calibrated_probability(mean_gap, *args.video_calibration)
+        else:
+            # Current app: VideoSignalAggregator averages image-calibrated frame probabilities.
+            probability = float(np.mean([calibrated_probability(g, *APP_CALIBRATION) for g in gaps]))
+        predictions["app as shipped"].append(Prediction(path, is_ai, probability, generator, mean_gap))
+
+        for candidate in candidates:
+            try:
+                c_gap = float(np.mean([candidate.logit_diff(f) for f in normalized]))
+            except (Exception, SystemExit) as e:  # noqa: BLE001
+                print(f"::warning::{candidate.name} failed on a video: {e!r}", file=sys.stderr)
+                continue
+            predictions[candidate.name].append(
+                Prediction(path, is_ai, calibrated_probability(c_gap), generator, c_gap))
+
         if index % 20 == 0:
             print(f"  {index}/{len(labeled)} videos", file=sys.stderr, flush=True)
 
-    name = args.dataset_name or args.dataset.resolve().name
-    print(f"=== {name} | video (5 frames, app pipeline) | {len(predictions)} videos, "
-          f"mean {np.mean(frame_counts):.1f} frames decoded ===")
-    print_report(predictions, 0.5)
-    if args.json_dir:
-        args.json_dir.mkdir(parents=True, exist_ok=True)
-        payload = {"dataset": name, "condition": "video", "preprocess": "video5", "calibration": None,
-                   "metrics": compute_metrics(predictions, 0.5)}
-        (args.json_dir / f"{name}__video__video5.json").write_text(json.dumps(payload, indent=2))
+    for model, model_predictions in predictions.items():
+        print(f"=== {name} | {model} | video (5 frames, app pipeline) | {len(model_predictions)} videos, "
+              f"mean {np.mean(frame_counts):.1f} frames decoded ===")
+        print_report(model_predictions, 0.5)
+        if args.json_dir:
+            args.json_dir.mkdir(parents=True, exist_ok=True)
+            payload = {"model": model, "dataset": name, "condition": "video", "preprocess": "video5",
+                       "calibration": None, "metrics": compute_metrics(model_predictions, 0.5)}
+            safe = model.replace(" ", "_").replace("/", "_")
+            (args.json_dir / f"{safe}__{name}__video__video5.json").write_text(json.dumps(payload, indent=2))
+
     if args.scores_csv:
         new_file = not args.scores_csv.exists()
         with args.scores_csv.open("a", newline="") as f:
             writer = csv.writer(f)
             if new_file:
-                writer.writerow(["dataset", "condition", "preprocess", "generator", "is_ai", "logit_diff"])
-            for p in predictions:
-                writer.writerow([name, "video", "video5", p.generator, int(p.ground_truth_is_ai), f"{p.logit_diff:.6f}"])
+                writer.writerow(["model", "dataset", "condition", "preprocess", "image", "generator", "is_ai",
+                                 "logit_diff"])
+            for model, model_predictions in predictions.items():
+                for p in model_predictions:
+                    writer.writerow([model, name, "video", "video5", p.path.relative_to(args.dataset).as_posix(),
+                                     p.generator, int(p.ground_truth_is_ai), f"{p.logit_diff:.6f}"])
 
 
 def main() -> None:
@@ -213,9 +245,16 @@ def main() -> None:
     e.add_argument("--dataset", type=Path, required=True)
     e.add_argument("--dataset-name", default=None)
     e.add_argument("--json-dir", type=Path, default=None)
-    e.add_argument("--scores-csv", type=Path, default=None)
+    e.add_argument("--scores-csv", type=Path, default=None,
+                   help="Per-video mean frame logit gap (what tools/calibrate.py fits the video calibration on)")
+    e.add_argument("--candidates", default=None, help="Also score these tools/eval_candidates.py models")
+    e.add_argument("--video-calibration", default=None,
+                   help="SLOPE,INTERCEPT (or 'app') applied to the mean frame logit gap, as the app's video path does")
 
     args = parser.parse_args()
+    if args.command == "eval" and args.video_calibration:
+        args.video_calibration = (APP_VIDEO_CALIBRATION if args.video_calibration == "app"
+                                  else tuple(float(v) for v in args.video_calibration.split(",")))
     if args.command == "fetch":
         fetch(args)
     else:

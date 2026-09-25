@@ -91,6 +91,9 @@ HIGH_THRESHOLD = 0.90
 # Keep these in sync with ModelConfig.CALIBRATION_SLOPE / CALIBRATION_INTERCEPT and the
 # app's two-view ("avg") preprocessing. Pass --calibration app to evaluate the app as shipped.
 APP_CALIBRATION = (0.2252, 0.0494)
+# Video path (VideoSignalAggregator): mean per-frame logit gap -> this calibration.
+# Keep in sync with ModelConfig.VIDEO_CALIBRATION_*; None until fitted from Video eval.
+APP_VIDEO_CALIBRATION = None
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 CONDITIONS = ("original", "jpeg75", "social")
@@ -409,7 +412,7 @@ def print_report(predictions: list[Prediction], threshold: float) -> None:
     print(f"ECE (calibration):     {m['ece']:.3f}  (0 = scores mean what they say)")
     print(f"Scores >99% or <1%:    {m['extreme_share']:.1%}")
     print()
-    print("App bands (LOW <0.30 / UNCERTAIN / HIGH >=0.70):")
+    print(f"App bands (LOW <{LOW_THRESHOLD:.2f} / UNCERTAIN / HIGH >={HIGH_THRESHOLD:.2f}):")
     for name in ("real", "ai"):
         b = m[f"bands_{name}"]
         print(f"  {name:>4}: LOW {b['low']:.1%}  UNCERTAIN {b['uncertain']:.1%}  HIGH {b['high']:.1%}")

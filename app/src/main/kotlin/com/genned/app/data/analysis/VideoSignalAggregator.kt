@@ -15,6 +15,15 @@ object VideoSignalAggregator {
             it.availability == SignalAvailability.AVAILABLE && it.score != null
         }
         if (available.isEmpty()) {
+            // Frames can fail with the model bundled; only blame bundling when a frame said so.
+            if (perFrameSignals.isNotEmpty() &&
+                perFrameSignals.none { it.availability == SignalAvailability.UNAVAILABLE }
+            ) {
+                return DetectionSignal.error(
+                    SignalType.AI_CLASSIFIER,
+                    "The visual classifier couldn't analyze the sampled video frames.",
+                )
+            }
             return DetectionSignal.unavailable(
                 SignalType.AI_CLASSIFIER,
                 "The on-device visual classifier is not bundled in this build, so sampled video " +

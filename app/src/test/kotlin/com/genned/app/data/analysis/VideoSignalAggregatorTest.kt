@@ -51,6 +51,20 @@ class VideoSignalAggregatorTest {
     }
 
     @Test
+    fun `returns an error, not unavailable, when every frame failed`() {
+        val result = VideoSignalAggregator.aggregateFrameSignals(
+            listOf(
+                DetectionSignal.error(SignalType.AI_CLASSIFIER, "failed"),
+                DetectionSignal.error(SignalType.AI_CLASSIFIER, "failed"),
+            ),
+        )
+
+        assertThat(result.availability).isEqualTo(SignalAvailability.ERROR)
+        assertThat(result.score).isNull()
+        assertThat(result.description).doesNotContain("not bundled")
+    }
+
+    @Test
     fun `returns unavailable for an empty frame list`() {
         val result = VideoSignalAggregator.aggregateFrameSignals(emptyList())
 

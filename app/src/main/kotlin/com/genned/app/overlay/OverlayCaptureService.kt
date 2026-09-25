@@ -42,6 +42,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -106,6 +109,11 @@ class OverlayCaptureService : Service() {
             return START_NOT_STICKY
         }
 
+        if (mediaProjection != null) {
+            Log.i(TAG, "onStartCommand: already running, tearing down the previous session before restarting")
+            tearDownSession()
+        }
+
         Log.i(TAG, "onStartCommand: starting overlay (foreground service + projection + bubble)")
         ServiceCompat.startForeground(
             this,
@@ -116,18 +124,27 @@ class OverlayCaptureService : Service() {
         startProjection(resultCode, data)
         addBubble()
         watchForegroundApp()
+        _running.value = true
 
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
         Log.i(TAG, "onDestroy: stopping overlay (this is the moment battery cost should end)")
+        tearDownSession()
+        serviceScope.cancel()
+        _running.value = false
+        super.onDestroy()
+    }
+
+    private fun tearDownSession() {
         watchJob?.cancel()
+        watchJob = null
+        analysisJob?.cancel()
+        analysisJob = null
         removeBubble()
         closeCaptureSurface()
         stopProjection()
-        serviceScope.cancel()
-        super.onDestroy()
     }
 
     // --- Foreground-app awareness: show the bubble specifically over the apps
@@ -464,6 +481,11 @@ class OverlayCaptureService : Service() {
         private const val FRAME_POLL_ATTEMPTS = 10
         private const val FRAME_POLL_DELAY_MS = 80L
         private const val TAG = "OverlayCaptureService"
+
+        private val _running = MutableStateFlow(false)
+
+        /** Whether the overlay session is live, so Settings can reflect it after being reopened. */
+        val running: StateFlow<Boolean> = _running.asStateFlow()
 
         fun startIntent(context: Context, resultCode: Int, data: Intent): Intent =
             Intent(context, OverlayCaptureService::class.java).apply {

@@ -30,6 +30,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -120,7 +121,7 @@ fun SettingsScreen(onBack: () -> Unit) {
 @Composable
 private fun OverlaySection() {
     val context = LocalContext.current
-    var overlayEnabled by remember { mutableStateOf(false) }
+    val overlayRunning by OverlayCaptureService.running.collectAsState()
     var permissionNotice by remember { mutableStateOf<Int?>(null) }
 
     val projectionManager = remember {
@@ -134,10 +135,7 @@ private fun OverlaySection() {
         if (activityResult.resultCode == Activity.RESULT_OK && data != null) {
             val serviceIntent = OverlayCaptureService.startIntent(context, activityResult.resultCode, data)
             ContextCompat.startForegroundService(context, serviceIntent)
-            overlayEnabled = true
             permissionNotice = null
-        } else {
-            overlayEnabled = false
         }
     }
 
@@ -154,11 +152,10 @@ private fun OverlaySection() {
         Text(text = stringResource(R.string.settings_overlay_enable), style = MaterialTheme.typography.bodyLarge)
         Spacer(modifier = Modifier.weight(1f))
         Switch(
-            checked = overlayEnabled,
+            checked = overlayRunning,
             onCheckedChange = { checked ->
                 if (!checked) {
                     context.stopService(Intent(context, OverlayCaptureService::class.java))
-                    overlayEnabled = false
                 } else {
                     when {
                         !OverlayPermissions.canDrawOverlays(context) -> {

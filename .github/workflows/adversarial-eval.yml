@@ -1,0 +1,81 @@
+name: Adversarial eval
+
+# Phase 2 (#15): benchmark phone-feasible defenses against white-box (FGSM, PGD with
+# EOT, adaptive), transfer and black-box (Square) attacks, then pick the defense to
+# integrate (tools/adv_report.py). One job per defense, in parallel. Manual only.
+# Images never leave the runners; only numbers are uploaded.
+on:
+  workflow_dispatch:
+    inputs:
+      smoke:
+        description: Tiny end-to-end run (a few images, 2 steps) to check the pipeline
+        type: boolean
+        default: false
+
+jobs:
+  attack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        defense: [none, transform, smoothing, consistency, ensemble]
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies (CPU-only torch)
+        run: |
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install "onnxruntime>=1.18,<2" "onnx>=1.16,<2" onnx2torch "timm>=1.0,<2" \
+            "huggingface_hub>=0.23,<1" "pillow>=10,<12" "numpy>=1.26,<3" "datasets>=2.19,<5"
+
+      - name: Fetch image datasets
+        run: tools/fetch_all_eval_data.sh 100
+
+      - name: Attack ${{ matrix.defense }}
+        run: |
+          python tools/adv_eval.py --defense ${{ matrix.defense }} \
+            --datasets eval-data/defactify eval-data/mj-dalle-sd-nbp \
+            --out adv-results ${{ inputs.smoke && '--smoke' || '' }}
+
+      - name: Upload results (numbers only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adv-${{ matrix.defense }}
+          path: adv-results/
+
+  report:
+    needs: attack
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: adv-*
+          merge-multiple: true
+          path: adv-results
+
+      - name: Report
+        run: |
+          python tools/adv_report.py adv-results > adv-results/report.md
+          cat adv-results/report.md >> "$GITHUB_STEP_SUMMARY"
+          cat adv-results/report.md
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: adversarial-report
+          path: adv-results/

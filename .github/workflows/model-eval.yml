@@ -61,8 +61,9 @@ jobs:
               --model app/src/main/assets/models/ai-image-detector.onnx \
               --dataset "$dir" --dataset-name "$name" \
               --conditions original,jpeg75,social \
-              --preprocess squash,center_crop \
+              --preprocess squash,center_crop,avg \
               --json-dir eval-results \
+              --scores-csv eval-results/scores.csv \
               | tee "eval-results/$name.txt" || echo "::warning::evaluation failed for $name"
             echo "::endgroup::"
           done
@@ -72,6 +73,11 @@ jobs:
         run: |
           mkdir -p eval-results
           python tools/eval_report.py eval-results > eval-results/report.md
+          if [ -f eval-results/scores.csv ]; then
+            python tools/calibrate.py eval-results/scores.csv --json eval-results/calibration.json \
+              > eval-results/calibration.md || echo "::warning::calibration failed"
+            cat eval-results/calibration.md >> eval-results/report.md
+          fi
           cat eval-results/report.md >> "$GITHUB_STEP_SUMMARY"
           cat eval-results/report.md
 

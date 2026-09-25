@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 CONDITION_ORDER = {"original": 0, "jpeg75": 1, "social": 2}
-PREPROCESS_ORDER = {"squash": 0, "center_crop": 1}
+PREPROCESS_ORDER = {"squash": 0, "center_crop": 1, "avg": 2}
 
 
 def pct(value: float | None) -> str:

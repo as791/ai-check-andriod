@@ -43,6 +43,13 @@ Preprocessing modes (image -> 380x380 model input):
     squash       resize straight to 380x380, ignoring aspect ratio - what the app
                  does today (AIImageClassifierProvider.preprocess)
     center_crop  resize the short side to 380, then center-crop 380x380
+    avg          mean of the squash and center_crop logit differences (2 inferences)
+
+Scores are raw model probabilities unless --calibration SLOPE,INTERCEPT is given,
+in which case P(ai) = sigmoid(SLOPE * (ai_logit - human_logit) + INTERCEPT) - the
+same transform ModelConfig.interpretOutput applies on-device. --scores-csv writes
+one row per image and combination (dataset, condition, preprocess, generator,
+is_ai, logit_diff) for tools/calibrate.py; it never contains file names or pixels.
 
 Resizing uses bilinear filtering to match Android's
 Bitmap.createScaledBitmap(..., filter = true). Normalization/channel order MUST
@@ -53,6 +60,7 @@ reflect what the app actually does on-device.
 from __future__ import annotations
 
 import argparse
+import csv
 import io
 import json
 import sys
@@ -80,7 +88,8 @@ HIGH_THRESHOLD = 0.70
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 CONDITIONS = ("original", "jpeg75", "social")
-PREPROCESS_MODES = ("squash", "center_crop")
+PREPROCESS_MODES = ("squash", "center_crop", "avg")
+BASE_MODES = ("squash", "center_crop")
 
 
 @dataclass
@@ -89,6 +98,7 @@ class Prediction:
     ground_truth_is_ai: bool
     ai_probability: float
     generator: str = "real"
+    logit_diff: float = 0.0
 
 
 def _jpeg(image: Image.Image, quality: int) -> Image.Image:
@@ -184,9 +194,27 @@ def interpret_output(raw_output: np.ndarray) -> float:
     return 0.5
 
 
+def logit_difference(raw_output: np.ndarray) -> float:
+    """ai_logit - human_logit (or the single AI logit): the input interpret_output squashes."""
+    flat = raw_output.reshape(-1)
+    if np.isnan(flat).any():
+        return 0.0
+    if flat.size == 2:
+        return float(flat[0]) - float(flat[1])
+    if flat.size == 1:
+        return float(flat[0])
+    return 0.0
+
+
+def calibrated_probability(logit_diff: float, slope: float = 1.0, intercept: float = 0.0) -> float:
+    """sigmoid(slope * logit_diff + intercept); slope=1, intercept=0 is the raw model output."""
+    return float(_sigmoid(slope * logit_diff + intercept))
+
+
 def run_inference(session: "ort.InferenceSession", tensor: np.ndarray) -> float:
+    """Returns the logit difference; see calibrated_probability for P(ai)."""
     outputs = session.run(None, {INPUT_NAME: tensor})
-    return interpret_output(outputs[0])
+    return logit_difference(outputs[0])
 
 
 def collect_images(directory: Path) -> list[Path]:
@@ -205,6 +233,8 @@ def evaluate_all(
     dataset_dir: Path,
     conditions: list[str],
     modes: list[str],
+    slope: float = 1.0,
+    intercept: float = 0.0,
 ) -> dict[tuple[str, str], list[Prediction]]:
     """Runs every (condition, preprocess) combination, decoding each image once."""
     session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
@@ -232,9 +262,15 @@ def evaluate_all(
             continue
         for condition in conditions:
             degraded = app_normalize(degrade(image, condition))
+            needed = {m for m in modes if m in BASE_MODES} | (set(BASE_MODES) if "avg" in modes else set())
+            diffs = {m: run_inference(session, to_tensor(to_model_input(degraded, m))) for m in needed}
+            if "avg" in modes:
+                diffs["avg"] = (diffs["squash"] + diffs["center_crop"]) / 2.0
             for mode in modes:
-                probability = run_inference(session, to_tensor(to_model_input(degraded, mode)))
-                results[(condition, mode)].append(Prediction(path, is_ai, probability, generator))
+                d = diffs[mode]
+                results[(condition, mode)].append(
+                    Prediction(path, is_ai, calibrated_probability(d, slope, intercept), generator, d)
+                )
         if index % 100 == 0:
             print(f"  {index}/{len(labeled)} images", file=sys.stderr)
     if skipped:
@@ -386,7 +422,16 @@ def main() -> None:
     parser.add_argument("--preprocess", default="squash", help=f"Comma-separated subset of {','.join(PREPROCESS_MODES)}")
     parser.add_argument("--dataset-name", default=None, help="Name used in JSON output (default: dataset folder name)")
     parser.add_argument("--json-dir", type=Path, default=None, help="Write one JSON result per combination here")
+    parser.add_argument("--scores-csv", type=Path, default=None, help="Append per-image logit differences here")
+    parser.add_argument("--calibration", default=None, help="SLOPE,INTERCEPT applied as in ModelConfig.interpretOutput")
     args = parser.parse_args()
+
+    slope, intercept = 1.0, 0.0
+    if args.calibration:
+        try:
+            slope, intercept = (float(v) for v in args.calibration.split(","))
+        except ValueError:
+            parser.error("--calibration must be SLOPE,INTERCEPT, e.g. 0.4,-0.1")
 
     conditions = [c.strip() for c in args.conditions.split(",") if c.strip()]
     modes = [m.strip() for m in args.preprocess.split(",") if m.strip()]
@@ -402,7 +447,7 @@ def main() -> None:
         sys.exit(1)
 
     dataset_name = args.dataset_name or args.dataset.resolve().name
-    results = evaluate_all(args.model, args.dataset, conditions, modes)
+    results = evaluate_all(args.model, args.dataset, conditions, modes, slope, intercept)
     if args.json_dir:
         args.json_dir.mkdir(parents=True, exist_ok=True)
 
@@ -415,10 +460,22 @@ def main() -> None:
                 "dataset": dataset_name,
                 "condition": condition,
                 "preprocess": mode,
+                "calibration": {"slope": slope, "intercept": intercept} if args.calibration else None,
                 "metrics": compute_metrics(predictions, args.threshold),
             }
             out = args.json_dir / f"{dataset_name}__{condition}__{mode}.json"
             out.write_text(json.dumps(payload, indent=2))
+
+    if args.scores_csv:
+        new_file = not args.scores_csv.exists()
+        with args.scores_csv.open("a", newline="") as f:
+            writer = csv.writer(f)
+            if new_file:
+                writer.writerow(["dataset", "condition", "preprocess", "generator", "is_ai", "logit_diff"])
+            for (condition, mode), predictions in results.items():
+                for p in predictions:
+                    writer.writerow([dataset_name, condition, mode, p.generator, int(p.ground_truth_is_ai),
+                                     f"{p.logit_diff:.6f}"])
 
 
 if __name__ == "__main__":

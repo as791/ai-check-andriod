@@ -11,8 +11,8 @@ accepts the `pixel_values` input and emits two raw logits. If the file is ever
 missing from a build, `AIImageClassifierProvider` honestly reports the
 `AI_CLASSIFIER` signal as unavailable rather than fabricating a score.
 
-What is still **not** done: no independent accuracy benchmark has been recorded yet
-(see "Measured accuracy" for the workflow that produces one), and `ModelConfig.BASE_CONFIDENCE` and
+Accuracy has now been measured (see "Measured accuracy"). What is still **not**
+done: `ModelConfig.BASE_CONFIDENCE` and
 the HIGH/UNCERTAIN/LOW thresholds are uncalibrated.
 
 **`Dafilab/ai-image-detector` is a gated repo on Hugging Face** — confirmed by
@@ -109,11 +109,10 @@ with `tools/evaluate.py` if you do this.
 
 ### Known limitations
 
-- **Not independently benchmarked in this project.** The Apache-2.0 license and
-  architecture are verified; accuracy against a real, diverse, up-to-date dataset of
-  AI-generated and real images is not. Run `tools/evaluate.py` against a labeled
-  dataset before treating its output as more than a rough signal, and before
-  calibrating `EvidenceWeights`/classification thresholds in the domain module.
+- **Moderate accuracy, overconfident raw scores.** See "Measured accuracy": AUC
+  0.91 / 0.80 on two public datasets, with about a third of real images in the
+  second one scored as AI. Its raw probabilities are far too extreme to show
+  as-is.
 - **Training data cutoff.** Like all AI-image detectors, this model's training data
   has a cutoff; it will be systematically weaker against generators released after
   that point (a fundamental limitation of every classifier-based approach, not
@@ -158,7 +157,36 @@ SD 2.1, SDXL, SD3, DALL-E 3, Midjourney v6) and
 - Neither dataset covers what the overlay actually captures, which is a
   phone-screen crop of an Instagram post. `social` only approximates it.
 
-Results: not yet recorded. Paste the workflow's summary table here after the first run.
+### Baseline: first run (2026-09-25, [run 36171690452](https://github.com/as791/genned/actions/runs/36171690452))
+
+250 real + 250 AI images per dataset, raw (uncalibrated) scores, app preprocessing
+(`squash`). "Real shown HIGH" / "AI shown LOW" use the app's bands at the time
+(LOW <30%, HIGH ≥70%).
+
+| Dataset | Condition | AUC | Accuracy @0.5 | Real→AI (FPR) | AI missed (FNR) | Real shown HIGH | AI shown LOW | ECE | Scores >99% or <1% |
+|---|---|---|---|---|---|---|---|---|---|
+| Defactify | original | 0.914 | 83.0% | 10.0% | 24.0% | 8.0% | 22.0% | 0.132 | 64.0% |
+| Defactify | social | 0.915 | 82.8% | 10.0% | 24.4% | 7.6% | 21.6% | 0.127 | 64.6% |
+| MJ/DALL·E/SD/NBP | original | 0.795 | 72.0% | 36.4% | 19.6% | 33.6% | 15.6% | 0.222 | 60.0% |
+| MJ/DALL·E/SD/NBP | social | 0.770 | 69.8% | 40.8% | 19.6% | 38.8% | 16.8% | 0.247 | 58.4% |
+
+Findings:
+- **Overconfident.** 60–74% of scores are above 99% or below 1%. Scores above 90%
+  are actually AI 93% (Defactify) / 72% (other set) of the time, and scores below
+  10% are still AI 18% of the time.
+- **Real photos are often flagged.** On the second set about a third of real
+  images land in HIGH.
+- **Compression barely matters.** `jpeg75`/`social` are within about 3 AUC
+  points of `original`. The Instagram re-upload isn't the main problem.
+- **Center crop is mixed.** Defactify AUC goes 0.914 → 0.964 and FPR 10% → 5.2%.
+  The other set is unchanged or slightly worse (0.795 → 0.794 original,
+  0.748 → 0.722 jpeg75).
+- **Per generator** (detected at 0.5, original): Midjourney v6 86%, SDXL 82%,
+  SD 2.1 80%, SD3 76%, **DALL·E 3 56%**.
+
+Caveats: MS-COCO (Defactify's real photos) is a very common training source, so
+Defactify numbers may be optimistic. What the second dataset's "real" class
+contains (photos only, or also artwork) hasn't been verified.
 
 ## Replacing the model file
 

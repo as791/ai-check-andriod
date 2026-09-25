@@ -21,9 +21,10 @@ import java.nio.FloatBuffer
 /**
  * Runs the bundled on-device AI-generated-image classifier via ONNX Runtime Mobile.
  * See internal-docs/MODEL.md for the model card (name, source, license, size, preprocessing,
- * output interpretation, known limitations) and instructions for adding the model
- * file — none is bundled in this build (see [ModelAssets]), so [analyze] honestly
- * reports [SignalAvailability.UNAVAILABLE] rather than fabricating a score.
+ * output interpretation, known limitations) and instructions for replacing the model
+ * file. The model ships as an app asset (see [ModelAssets]); if it is ever missing or
+ * fails to load, [analyze] honestly reports [SignalAvailability.UNAVAILABLE] rather
+ * than fabricating a score.
  *
  * The ONNX session is created lazily on first use and cached for the app's lifetime;
  * inference always runs off the main thread.

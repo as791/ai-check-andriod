@@ -1,14 +1,16 @@
-# Model directory (empty by design)
+# Bundled classifier model
 
-This build does not ship an on-device AI-image classifier model. `AIImageClassifierProvider`
-looks for a file at this exact path — `app/src/main/assets/models/ai-image-detector.onnx`
-— and honestly reports the classifier signal as **unavailable** when it's missing,
-rather than fabricating a score.
+`ai-image-detector.onnx` (about 70 MB) is the on-device AI-image classifier that
+`AIImageClassifierProvider` loads.
 
-See `internal-docs/MODEL.md` in the repository root for:
-- the specific model this app is built for (name, source, license),
-- exactly how to export/convert it to ONNX,
-- how to verify the input/output tensor names and label order before trusting it,
-- and where to drop the resulting `.onnx` file (right here).
+- **What it is:** the Hugging Face model
+  [`Dafilab/ai-image-detector`](https://huggingface.co/Dafilab/ai-image-detector)
+  (EfficientNet-B4), exported to ONNX. Input `pixel_values` `[1, 3, 380, 380]`;
+  output is two raw logits in `[ai, human]` order.
+- **License:** Apache-2.0.
+- **Delivery:** bundled into the APK at build time as an app asset. It is never
+  downloaded at runtime.
+- **Accuracy:** not independently benchmarked yet. See `tools/evaluate.py`.
 
-Do not commit a model file you have not personally verified the license of.
+To replace or re-export it, see `internal-docs/MODEL.md` in the repository root.
+Do not commit a model file whose license and provenance you have not verified.

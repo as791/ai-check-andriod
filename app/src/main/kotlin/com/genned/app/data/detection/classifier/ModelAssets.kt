@@ -5,9 +5,9 @@ import java.io.IOException
 
 /**
  * The classifier model is bundled at build time as an app asset, never downloaded at
- * runtime (see internal-docs/MODEL.md "Never silently download a model"). This build ships
- * without one — [openModelBytes] returning null is the expected, honest state until a
- * maintainer follows internal-docs/MODEL.md to add `app/src/main/assets/models/ai-image-detector.onnx`.
+ * runtime (see internal-docs/MODEL.md "Never download a model at runtime"). The app ships
+ * with `app/src/main/assets/models/ai-image-detector.onnx`; [openModelBytes] returns null
+ * only if that asset is missing from a build, which callers treat as "classifier unavailable".
  */
 object ModelAssets {
     const val ASSET_PATH = "models/ai-image-detector.onnx"

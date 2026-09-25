@@ -9,11 +9,10 @@ package com.genned.app.data.detection.classifier
  * The class order in [interpretOutput] is confirmed (not guessed) from the real
  * `Dafilab/ai-image-detector` config.json on Hugging Face: `label_mapping` is
  * `{"0": "ai", "1": "human"}`, i.e. output index 0 = P(ai), index 1 = P(human) —
- * the reverse of an earlier, unverified assumption in this file. [INPUT_NAME] is
- * still this project's best-documented expectation for the exported ONNX graph
- * (see internal-docs/MODEL.md "Adding the model file"), not verified against the actual
- * export in this build (none is bundled — see [ModelAssets]); confirm it with
- * Netron once a real `.onnx` file exists.
+ * the reverse of an earlier, unverified assumption in this file. [INPUT_NAME] matches
+ * the bundled ONNX export: it loads and runs on-device with this input name and emits
+ * two raw logits. Re-check both with Netron if the model is ever replaced (see
+ * internal-docs/MODEL.md "Replacing the model file").
  */
 object ModelConfig {
     const val DISPLAY_NAME = "Dafilab/ai-image-detector (EfficientNet-B4, ONNX export)"
@@ -21,7 +20,7 @@ object ModelConfig {
     const val INPUT_SIZE = 380
     val INPUT_SHAPE = longArrayOf(1, 3, INPUT_SIZE.toLong(), INPUT_SIZE.toLong())
 
-    /** ONNX graph input tensor name — verify with Netron against the real export. */
+    /** ONNX graph input tensor name — confirmed against the bundled export; re-check if the model changes. */
     const val INPUT_NAME = "pixel_values"
 
     /** Standard ImageNet normalization used by timm-trained models by default. */

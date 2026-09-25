@@ -6,8 +6,8 @@ context on what was considered and deliberately excluded from the MVP.
 
 ## V1 (this repository)
 
-Android only. On-device classifier (when a model is bundled — see
-`internal-docs/MODEL.md`) + metadata inspection + honest provenance/watermark stubs. Local
+Android only. On-device classifier (bundled `Dafilab/ai-image-detector` ONNX
+model — see `internal-docs/MODEL.md`) + metadata inspection + honest provenance/watermark stubs. Local
 history via Room. No accounts, no backend, no payments, no ads.
 
 **Video (Reels/Shorts) is supported on a frame-sampled basis**: `AnalyzeVideoUseCase`

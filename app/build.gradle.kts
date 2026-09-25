@@ -95,7 +95,7 @@ dependencies {
 
     // On-device AI classifier runtime. See domain classifier docs at
     // app/src/main/kotlin/com/genned/app/data/detection/classifier and internal-docs/MODEL.md
-    // for the model this loads (or does not, if not yet bundled).
+    // for the bundled model this loads.
     implementation(libs.onnxruntime.android)
 
     testImplementation(libs.junit)

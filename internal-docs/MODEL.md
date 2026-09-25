@@ -2,25 +2,24 @@
 
 ## Status in this repository
 
-**No classifier model file is bundled in this build.** `AIImageClassifierProvider`
-looks for `app/src/main/assets/models/ai-image-detector.onnx` and, when it isn't
-there, honestly reports the `AI_CLASSIFIER` signal as unavailable rather than
-fabricating a score. Everything below documents the model this project is *built
-for* and exactly how to add it — see "Adding the model file".
+**The classifier model is bundled.** `app/src/main/assets/models/ai-image-detector.onnx`
+(about 70 MB) is committed to the repository: the `Dafilab/ai-image-detector` model
+below, exported to ONNX (export steps in "Replacing the model file"). It loads and runs on real
+devices — debug logs show output like
+`Classifier raw output=[[-3.787038, 2.1529553]] -> P(ai)=0.0026`, i.e. the graph
+accepts the `pixel_values` input and emits two raw logits. If the file is ever
+missing from a build, `AIImageClassifierProvider` honestly reports the
+`AI_CLASSIFIER` signal as unavailable rather than fabricating a score.
 
-Why no model ships out of the box: producing it requires downloading ~100MB+ of
-weights from Hugging Face and running a PyTorch → ONNX export, which needs
-`huggingface.co` network access and a `torch`/`timm`/`onnx` toolchain. Neither was
-available in the sandbox this project was scaffolded in (see README "Known
-limitations"). This is the exact contingency the project brief asked for: ship the
-provider abstraction and precise instructions rather than a fabricated or
-unlicensed model file.
+What is still **not** done: no independent accuracy benchmark has been run (see
+"Known limitations" and `tools/evaluate.py`), and `ModelConfig.BASE_CONFIDENCE` and
+the HIGH/UNCERTAIN/LOW thresholds are uncalibrated.
 
 **`Dafilab/ai-image-detector` is a gated repo on Hugging Face** — confirmed by
 actually running the conversion: a plain download gets a `401 GatedRepoError`, even
 though the model itself is public and Apache-2.0 licensed. You must be logged in
 *and* have clicked through the access request on the model page before downloading
-works (see step 1 in "Adding the model file"). Its `config.json` is also not in
+works (see step 1 in "Replacing the model file"). Its `config.json` is also not in
 `timm`'s hub-config format (`timm.create_model("hf_hub:...")` fails with
 `KeyError: 'architecture'`) — the repo instead publishes a raw training checkpoint,
 `pytorch_model.pth` (71MB, renamed at some point from `model_epoch_8_acc_0.9859.pth`
@@ -90,21 +89,20 @@ failing input.
 
 **This label order is now confirmed**, not guessed: the real `config.json` on
 `Dafilab/ai-image-detector` publishes `"label_mapping": {"0": "ai", "1": "human"}`
-directly (fetched while working through "Adding the model file" below), i.e. output
-index 0 = P(ai). An earlier version of this file/code assumed the reverse
-(`[human, ai]`), which would have silently inverted every result — caught before a
-model was ever bundled, precisely because this doc insisted on confirming it rather
-than trusting the initial guess. Still worth a final sanity check once you have the
-real `.onnx` export:
-1. Open it in [Netron](https://netron.app) and confirm the real input tensor name
-   (`ModelConfig.INPUT_NAME` currently assumes `"pixel_values"`) and output shape.
+directly, i.e. output index 0 = P(ai). An earlier version of this file/code assumed
+the reverse (`[human, ai]`), which would have silently inverted every result — caught
+before the model was bundled, precisely because this doc insisted on confirming it
+rather than trusting the initial guess. The bundled export runs with
+`ModelConfig.INPUT_NAME = "pixel_values"` and a 2-logit output. If you replace the
+model:
+1. Open the new export in [Netron](https://netron.app) and confirm the input tensor
+   name and output shape.
 2. Update `ModelConfig.kt` if the input name differs, or if a future model version's
    `config.json` changes `label_mapping`.
 
 ### Model size
 
-Not measured directly (no export was run in this environment). An EfficientNet-B4
-ONNX export is typically in the tens of megabytes at full precision; int8
+The bundled full-precision export is about 70 MB (70,075,998 bytes). int8
 quantization (via `onnxruntime.quantization` or `torch.quantization`) can shrink
 this further for a smaller APK, at some accuracy cost that should be re-verified
 with `tools/evaluate.py` if you do this.
@@ -127,14 +125,17 @@ with `tools/evaluate.py` if you do this.
   image, and (per this app's design) its output is never treated as proof on its
   own — see `internal-docs/ARCHITECTURE.md`'s evidence-aggregation model.
 
-## Adding the model file
+## Replacing the model file
+
+Follow these steps to re-export the model with `tools/convert_model.py` or replace
+the bundled file with a different one.
 
 1. Request access to the gated repo: visit
    https://huggingface.co/Dafilab/ai-image-detector while logged into a (free)
    Hugging Face account and click through to agree/request access. Then create a
    read-scoped token at https://huggingface.co/settings/tokens and run
    `huggingface-cli login` locally with it — a plain download otherwise fails with
-   `401 GatedRepoError` (see "Why no model ships out of the box" above).
+   `401 GatedRepoError` (see the gated-repo note under "Status in this repository").
 2. `pip install -r tools/requirements.txt`
 3. `python tools/convert_model.py --output app/src/main/assets/models/ai-image-detector.onnx`
    — read that script's docstring first; it explains the verification steps you

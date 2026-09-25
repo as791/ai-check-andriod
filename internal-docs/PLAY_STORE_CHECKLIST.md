@@ -5,9 +5,9 @@ actual store listing.
 
 ## Before any release build
 
-- [ ] Bundle a real classifier model and verify it (see `internal-docs/MODEL.md`) — the app
-      is fully functional without one (metadata-only analysis), but a store listing
-      implying "AI detection" should ship with the classifier working.
+- [x] Bundle a real classifier model (see `internal-docs/MODEL.md`) — done:
+      `ai-image-detector.onnx` is committed and runs on-device. Its accuracy is
+      still unmeasured (next item).
 - [ ] Run `tools/evaluate.py` against a real labeled dataset and record the
       accuracy/precision/recall/F1 numbers somewhere durable (e.g. this file, or a
       release note) — do not publish accuracy claims that weren't measured.
@@ -62,7 +62,7 @@ actual store listing.
       `release`, and store the keystore + Play App Signing enrollment per Google's
       current guidance.
 - [ ] `isMinifyEnabled`/`isShrinkResources` are already on for `release` builds —
-      after bundling a real ONNX model, verify R8 doesn't strip anything ONNX
+      with the bundled ONNX model, verify R8 doesn't strip anything ONNX
       Runtime's JNI bridge needs (see `app/proguard-rules.pro`; re-test a release
       build specifically, since debug builds skip minification).
 - [ ] Accessibility Service policy: this app does not use Accessibility Service

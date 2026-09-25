@@ -207,6 +207,53 @@ Findings:
 - `tools/evaluate.py --preprocess avg --calibration app` reproduces the app as
   shipped. The `Model eval` report includes it as the "app as shipped" rows.
 
+**Verified** ([run 36187349202](https://github.com/as791/genned/actions/runs/36187349202),
+app exactly as shipped):
+
+| Dataset | AUC | Real shown HIGH | AI shown LOW | ECE | Scores >99% or <1% |
+|---|---|---|---|---|---|
+| Defactify (original / jpeg75 / social) | 0.951–0.952 | 0.0% | 6.4% | 0.102 | 1.0% |
+| MJ/DALL·E/SD/NBP (original / jpeg75 / social) | 0.744–0.803 | 2.4–2.8% | 3.6–8.0% | 0.088–0.093 | 0.0% |
+
+AUC is identical to the uncalibrated two-view scores, as it must be, since
+calibration only rescales scores and doesn't reorder them. The false-HIGH target
+(≤5%) holds in every condition.
+
+### Candidate detectors: first comparison ([run 36186295441](https://github.com/as791/genned/actions/runs/36186295441))
+
+Same images and conditions. Each candidate uses its own preprocessing, and its
+scores are raw.
+
+| Model | Defactify AUC | MJ/DALL·E/SD/NBP AUC | Real passed @0.5 | AI caught @0.5 (harder set) |
+|---|---|---|---|---|
+| Bundled (as shipped) | 0.951 | 0.744–0.803 | 94% / 56–60% | 74–84% |
+| Community Forensics ViT-S 224 (MIT) | 0.959–0.960 | 0.624–0.708 | 99% | 10–15% |
+| Community Forensics ViT-S 384 (MIT) | 0.941 | 0.520–0.589 | 99.6% | 9–14% |
+
+Community Forensics almost never flags a real image, but it misses most AI
+images in the harder set. It's not a replacement on its own. Its errors do
+complement the bundled model's (for example, it catches 76% of DALL·E 3 vs 56%),
+which is what the ensemble analysis tests. The SigLIP and dima806 candidates
+didn't run in this pass because of a tooling bug that has since been fixed (a
+`'hum'` label crashed the script).
+
+### Video: the Reels path ([run 36187968201](https://github.com/as791/genned/actions/runs/36187968201))
+
+This is the app's exact pipeline: 5 frames per video, two views per frame,
+calibrated, and the per-frame probabilities averaged. 60 real + 60 AI videos per
+dataset.
+
+| Dataset | AUC | Real shown HIGH | AI shown LOW | Mean score, real videos | AI caught @0.5 |
+|---|---|---|---|---|---|
+| [DF26](https://huggingface.co/datasets/DF26/DF26) (2026 talking heads: Veo 3.1, Kling 3.0, Wan 2.6, Grok Imagine, HunyuanVideo 1.5, LTX 2.3…) | **0.646** | **28.3%** | 0% | 0.83 | 100% |
+| [DeepAction](https://huggingface.co/datasets/faridlab/deepaction_v1) (actions: Veo, RunwayML, CogVideoX, AnimateDiff, VideoPoet, SD) | 0.797 | 3.3% | 0% | 0.65 | 98% |
+
+**The image model reads real video frames as AI-like.** Compression, motion blur
+and talking-head framing all push real videos up. The image calibration doesn't
+carry over to video, so about 1 in 4 real talking-head clips showed HIGH. The
+fix is a separate video calibration fit on video data (issue #14); the
+benchmark is being re-run with 100 + 100 videos per dataset to fit it.
+
 Caveats: MS-COCO (Defactify's real photos) is a very common training source, so
 Defactify numbers may be optimistic. What the second dataset's "real" class
 contains (photos only, or also artwork) hasn't been verified.

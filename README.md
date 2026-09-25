@@ -139,9 +139,12 @@ only ever bundled at build time.
   [issue #14](https://github.com/as791/genned/issues/14) and
   `internal-docs/MODEL.md` "Measured accuracy". Anyone can re-run the benchmark
   from the repo's Actions tab ("Model eval").
-- **Video is checked frame by frame.** Reels and Shorts are analyzed by running
-  the image classifier on sampled frames. There is no motion or audio analysis,
-  and no video benchmark yet.
+- **Video is less reliable than photos.** Reels and Shorts are analyzed by
+  running the image classifier on 5 sampled frames. There is no motion or audio
+  analysis. On two recent real-vs-AI video benchmarks it caught nearly every AI
+  clip, but it also scored many *real* videos as AI-like. That was especially
+  true for talking-head clips, where 28% of real videos came out HIGH. A separate
+  video calibration to fix this false-alarm problem is in progress (#14).
 - Like every AI-image detector, the classifier's training data has a cutoff
   and will be weaker against newer generators; compression, screenshotting,
   and intentional adversarial editing can all shift results in either

@@ -38,3 +38,4 @@ google-services.json
 # Local model-eval outputs (tools/fetch_eval_data.py, tools/evaluate.py)
 eval-data/
 eval-results/
+__pycache__/

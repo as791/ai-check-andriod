@@ -88,9 +88,10 @@ design; this section is what it means for your data specifically.
   never read, saved, or looked at by this app at all — the mirror exists only so
   a tap has something to read from, not to continuously observe your screen.
   Nothing is captured before the feature is enabled or after you leave
-  Instagram/WhatsApp (bubble hidden), and the mirror itself is torn down the
-  moment you do. Android requires you to grant this via a system "screen
-  capture" consent dialog every time the overlay service is (re)started; this
+  Instagram/WhatsApp (bubble hidden): the mirror is paused (detached) the
+  moment you leave, and fully released when the overlay is turned off.
+  Android requires you to grant this via a system "screen capture" consent
+  dialog every time the overlay service is (re)started; this
   is not something the app can request silently, and the consent does not
   persist across a service restart.
 - **What it does not see:** it never reads Instagram/WhatsApp's own data, network

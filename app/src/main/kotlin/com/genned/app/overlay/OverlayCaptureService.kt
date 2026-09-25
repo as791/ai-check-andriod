@@ -161,12 +161,12 @@ class OverlayCaptureService : Service() {
                 Log.d(TAG, "foregroundPackage=$packageName shouldShowBubble=$shouldShow")
                 bubbleView?.visibility = if (shouldShow) android.view.View.VISIBLE else android.view.View.GONE
 
-                // The capture surface's lifetime is tied to bubble visibility, not to
-                // an individual tap - see the comment above startProjection for why.
+                // Created once, then paused/resumed with bubble visibility - see the
+                // comment above startProjection for why it must never be re-created.
                 if (shouldShow) {
                     openCaptureSurface()
                 } else {
-                    closeCaptureSurface()
+                    pauseCaptureSurface()
                 }
             }
         }
@@ -175,22 +175,16 @@ class OverlayCaptureService : Service() {
     // --- MediaProjection setup ---
     //
     // The MediaProjection consent (below) is obtained once and held for the whole
-    // service lifetime. The VirtualDisplay/ImageReader it feeds, on the other hand,
-    // is opened only while the bubble is visible (i.e. for the duration of one
-    // continuous visit to Instagram/WhatsApp - see watchForegroundApp) rather than
-    // for the whole service session or freshly per tap. Per-tap open/close was the
-    // original design (cheaper: a VirtualDisplay makes the system continuously
-    // composite/mirror the screen into it, real GPU/battery cost even while nothing
-    // is being read from it) but doesn't hold up on-device: this device's Android
-    // build only reliably backs ONE VirtualDisplay per MediaProjection grant - the
-    // very next createVirtualDisplay() call after a prior one was released fires
-    // MediaProjection.Callback.onStop() and kills the whole session, seen on-device
-    // as the overlay dying on the second tap of every visit. A Service can't
-    // silently re-request MediaProjection consent (that needs an Activity to launch
-    // the system dialog), so keeping the surface open per-visit is the fix: repeat
-    // taps within one visit reuse it, and it's still closed the moment you leave
-    // Instagram/WhatsApp, so there's no mirroring cost the rest of the time the
-    // overlay is left enabled.
+    // service lifetime, and so is the VirtualDisplay/ImageReader it feeds: Android
+    // 14+ allows only ONE createVirtualDisplay() call per MediaProjection grant - a
+    // second call revokes the grant (MediaProjection.Callback.onStop()), seen
+    // on-device as the overlay dying on the 2nd tap (when displays were per-tap)
+    // and then on re-entering Instagram (when they were per-visit). A Service can't
+    // silently re-request consent (that needs an Activity to show the system
+    // dialog), so the display is created once, on the first visit, and afterwards
+    // only paused/resumed via VirtualDisplay.setSurface: detaching the surface is
+    // like turning that virtual screen off, so nothing is mirrored (no GPU/battery
+    // cost) while the bubble is hidden. It's released only when the overlay stops.
 
     private fun startProjection(resultCode: Int, data: Intent) {
         val metrics = DisplayMetrics()
@@ -256,7 +250,13 @@ class OverlayCaptureService : Service() {
     }
 
     private fun openCaptureSurface() {
-        if (captureDisplay != null) return // already open for this visit
+        val existing = captureDisplay
+        val existingReader = captureReader
+        if (existing != null && existingReader != null) {
+            Log.d(TAG, "resumeCaptureSurface at ${System.currentTimeMillis()}")
+            existing.setSurface(existingReader.surface)
+            return
+        }
         val projection = mediaProjection ?: return
         Log.d(TAG, "openCaptureSurface at ${System.currentTimeMillis()}")
         val reader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
@@ -272,6 +272,12 @@ class OverlayCaptureService : Service() {
         )
         captureReader = reader
         captureDisplay = display
+    }
+
+    private fun pauseCaptureSurface() {
+        val display = captureDisplay ?: return
+        Log.d(TAG, "pauseCaptureSurface at ${System.currentTimeMillis()}")
+        display.setSurface(null)
     }
 
     private fun closeCaptureSurface() {
@@ -428,8 +434,8 @@ class OverlayCaptureService : Service() {
     private suspend fun captureFrame(reader: ImageReader): File? = withContext(Dispatchers.IO) {
         // A just-opened VirtualDisplay (or one that hasn't produced a frame since
         // its last read) needs a frame or two to catch up; briefly poll rather than
-        // failing on the first miss. The surface itself is NOT opened/closed here -
-        // see openCaptureSurface/closeCaptureSurface, tied to bubble visibility.
+        // failing on the first miss. The surface itself is NOT managed here - see
+        // openCaptureSurface/pauseCaptureSurface, tied to bubble visibility.
         var image: Image? = null
         for (attempt in 0 until FRAME_POLL_ATTEMPTS) {
             image = reader.acquireLatestImage()

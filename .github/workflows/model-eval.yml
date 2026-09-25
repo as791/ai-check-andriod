@@ -1,0 +1,83 @@
+name: Model eval
+
+# Benchmarks the bundled classifier (app/src/main/assets/models/ai-image-detector.onnx)
+# against public labeled real-vs-AI datasets. Manual only: it downloads a few
+# hundred MB of images and takes a while, and nothing here gates the app build.
+# Images are used only inside the runner; only the numbers are uploaded.
+# See internal-docs/MODEL.md "Measured accuracy".
+on:
+  workflow_dispatch:
+    inputs:
+      samples_per_class:
+        description: Images per class (real / AI) per dataset
+        default: '250'
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install evaluation dependencies (CPU only, no torch)
+        run: pip install "onnxruntime>=1.18,<2" "pillow>=10,<12" "numpy>=1.26,<3" "datasets>=2.19,<5"
+
+      # Defactify: MS-COCO real photos + SD 2.1 / SDXL / SD3 / DALL-E 3 / Midjourney v6
+      # made from the same captions. Label_A = real/AI, Label_B = source id. The id -> name
+      # order below follows the dataset card's listing order; fetch_eval_data.py fails if
+      # Label_A and Label_B ever disagree about which images are real.
+      - name: Fetch Defactify sample
+        continue-on-error: true
+        run: >
+          python tools/fetch_eval_data.py
+          --dataset Rajarshi-Roy-research/Defactify_Image_Dataset
+          --out eval-data/defactify
+          --per-class ${{ inputs.samples_per_class }}
+          --label-col Label_A --ai-values 1 --real-values 0
+          --generator-col Label_B
+          --generator-names real,sd21,sdxl,sd3,dalle3,midjourney6
+
+      # Midjourney / DALL-E / SD / Nano Banana Pro vs real (labels auto-detected from the
+      # dataset's ClassLabel names; fails loudly if they're ambiguous).
+      - name: Fetch Midjourney/DALL-E/SD/Nano Banana Pro sample
+        continue-on-error: true
+        run: >
+          python tools/fetch_eval_data.py
+          --dataset julienlucas/midjourney-dalle-sd-nanobananapro-dataset
+          --out eval-data/mj-dalle-sd-nbp
+          --per-class ${{ inputs.samples_per_class }}
+
+      - name: Evaluate
+        run: |
+          mkdir -p eval-results
+          for dir in eval-data/*/; do
+            name="$(basename "$dir")"
+            echo "::group::$name"
+            python tools/evaluate.py \
+              --model app/src/main/assets/models/ai-image-detector.onnx \
+              --dataset "$dir" --dataset-name "$name" \
+              --conditions original,jpeg75,social \
+              --preprocess squash,center_crop \
+              --json-dir eval-results \
+              | tee "eval-results/$name.txt" || echo "::warning::evaluation failed for $name"
+            echo "::endgroup::"
+          done
+
+      - name: Report
+        if: always()
+        run: |
+          mkdir -p eval-results
+          python tools/eval_report.py eval-results > eval-results/report.md
+          cat eval-results/report.md >> "$GITHUB_STEP_SUMMARY"
+          cat eval-results/report.md
+
+      - name: Upload results (numbers only, no images)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-eval-results
+          path: eval-results/

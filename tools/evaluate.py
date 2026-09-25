@@ -3,12 +3,10 @@
 
 This is the tool referred to throughout internal-docs/MODEL.md and internal-docs/ARCHITECTURE.md as
 the intended source of truth for detector quality — Genned's evidence weights and
-classification thresholds should eventually be calibrated from real numbers this
-script produces, not guessed. It has NOT been run against a real dataset as part of
-building this repository: no labeled AI/real image corpus and no ML runtime were
-available in the environment this project was built in (see README "Known
-limitations"). Running it is a maintainer task before shipping the classifier
-signal as a serious product claim.
+classification thresholds should be calibrated from the numbers this script
+produces, not guessed. The `model-eval` GitHub Actions workflow
+(.github/workflows/model-eval.yml) runs it against public labeled datasets; see
+internal-docs/MODEL.md "Measured accuracy".
 
 Usage:
     python tools/evaluate.py \\
@@ -16,30 +14,47 @@ Usage:
         --dataset /path/to/dataset \\
         --threshold 0.5
 
+    # Several degradation conditions / preprocessing modes in one pass, with a
+    # JSON result per combination (consumed by tools/eval_report.py):
+    python tools/evaluate.py --model ... --dataset ... \\
+        --conditions original,jpeg75,social --preprocess squash,center_crop \\
+        --json-dir results/
+
 Expected dataset layout (binary classification, folder name = ground truth):
 
     dataset/
-      ai/            # known AI-generated images
+      ai/                # known AI-generated images, optionally grouped
+        sdxl/img001.png  # by generator (subfolder name = generator)
+        img002.png       # (or directly in ai/ -> generator "ai")
+      real/              # known non-AI (camera/human-made) images
         img001.jpg
-        img002.png
-        ...
-      real/          # known non-AI (camera/human-made) images
-        img001.jpg
-        ...
 
-Prints accuracy, precision, recall, F1, a confusion matrix, and the false-positive /
-false-negative rates ("positive" = AI-generated), matching what a product decision
-about classification thresholds (see EvidenceWeights.HIGH_THRESHOLD /
-LOW_THRESHOLD in the domain module) should be based on.
+Conditions (applied to each image before preprocessing):
+    original  the file as-is
+    jpeg75    re-encoded once as JPEG quality 75
+    social    what a post seen through Instagram goes through: long edge
+              downscaled to <=1080, then JPEG q75 (platform re-upload)
 
-Preprocessing here MUST match app/src/main/kotlin/.../classifier/ModelConfig.kt
-exactly (input size, channel order, normalization) or these numbers will not
+Every condition then goes through the app's own normalization, exactly as
+ImageLoader does before the classifier ever sees the image: long edge capped at
+2048, re-encoded as JPEG quality 92.
+
+Preprocessing modes (image -> 380x380 model input):
+    squash       resize straight to 380x380, ignoring aspect ratio - what the app
+                 does today (AIImageClassifierProvider.preprocess)
+    center_crop  resize the short side to 380, then center-crop 380x380
+
+Resizing uses bilinear filtering to match Android's
+Bitmap.createScaledBitmap(..., filter = true). Normalization/channel order MUST
+match app/src/main/kotlin/.../classifier/ModelConfig.kt or these numbers will not
 reflect what the app actually does on-device.
 """
 
 from __future__ import annotations
 
 import argparse
+import io
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,7 +74,13 @@ MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 INPUT_NAME = "pixel_values"
 
+# Keep these in sync with EvidenceWeights.kt (domain module).
+LOW_THRESHOLD = 0.30
+HIGH_THRESHOLD = 0.70
+
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+CONDITIONS = ("original", "jpeg75", "social")
+PREPROCESS_MODES = ("squash", "center_crop")
 
 
 @dataclass
@@ -67,14 +88,69 @@ class Prediction:
     path: Path
     ground_truth_is_ai: bool
     ai_probability: float
+    generator: str = "real"
 
 
-def preprocess(image_path: Path) -> np.ndarray:
-    image = Image.open(image_path).convert("RGB").resize((INPUT_SIZE, INPUT_SIZE))
+def _jpeg(image: Image.Image, quality: int) -> Image.Image:
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=quality)
+    buffer.seek(0)
+    return Image.open(buffer).convert("RGB")
+
+
+def degrade(image: Image.Image, condition: str) -> Image.Image:
+    if condition == "original":
+        return image
+    if condition == "jpeg75":
+        return _jpeg(image, 75)
+    if condition == "social":
+        long_edge = max(image.size)
+        if long_edge > 1080:
+            scale = 1080 / long_edge
+            image = image.resize(
+                (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
+                Image.BILINEAR,
+            )
+        return _jpeg(image, 75)
+    raise ValueError(f"Unknown condition: {condition}")
+
+
+def app_normalize(image: Image.Image) -> Image.Image:
+    """Mirrors ImageLoader: long edge capped at MAX_DIMENSION_PX (2048), JPEG quality 92."""
+    long_edge = max(image.size)
+    if long_edge > 2048:
+        scale = 2048 / long_edge
+        image = image.resize(
+            (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
+            Image.BILINEAR,
+        )
+    return _jpeg(image, 92)
+
+
+def to_model_input(image: Image.Image, mode: str) -> Image.Image:
+    if mode == "squash":
+        return image.resize((INPUT_SIZE, INPUT_SIZE), Image.BILINEAR)
+    if mode == "center_crop":
+        scale = INPUT_SIZE / min(image.size)
+        width = max(INPUT_SIZE, round(image.width * scale))
+        height = max(INPUT_SIZE, round(image.height * scale))
+        resized = image.resize((width, height), Image.BILINEAR)
+        left = (width - INPUT_SIZE) // 2
+        top = (height - INPUT_SIZE) // 2
+        return resized.crop((left, top, left + INPUT_SIZE, top + INPUT_SIZE))
+    raise ValueError(f"Unknown preprocess mode: {mode}")
+
+
+def to_tensor(image: Image.Image) -> np.ndarray:
     array = np.asarray(image, dtype=np.float32) / 255.0
     array = (array - MEAN) / STD
     chw = np.transpose(array, (2, 0, 1))  # HWC -> CHW
     return np.expand_dims(chw, axis=0).astype(np.float32)
+
+
+def preprocess(image_path: Path, condition: str = "original", mode: str = "squash") -> np.ndarray:
+    image = Image.open(image_path).convert("RGB")
+    return to_tensor(to_model_input(app_normalize(degrade(image, condition)), mode))
 
 
 def _sigmoid(x: float) -> float:
@@ -108,8 +184,7 @@ def interpret_output(raw_output: np.ndarray) -> float:
     return 0.5
 
 
-def run_inference(session: "ort.InferenceSession", image_path: Path) -> float:
-    tensor = preprocess(image_path)
+def run_inference(session: "ort.InferenceSession", tensor: np.ndarray) -> float:
     outputs = session.run(None, {INPUT_NAME: tensor})
     return interpret_output(outputs[0])
 
@@ -117,16 +192,28 @@ def run_inference(session: "ort.InferenceSession", image_path: Path) -> float:
 def collect_images(directory: Path) -> list[Path]:
     if not directory.is_dir():
         return []
-    return sorted(p for p in directory.iterdir() if p.suffix.lower() in IMAGE_EXTENSIONS)
+    return sorted(p for p in directory.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS)
 
 
-def evaluate(model_path: Path, dataset_dir: Path, threshold: float) -> list[Prediction]:
+def generator_of(path: Path, ai_dir: Path) -> str:
+    relative = path.relative_to(ai_dir)
+    return relative.parts[0] if len(relative.parts) > 1 else "ai"
+
+
+def evaluate_all(
+    model_path: Path,
+    dataset_dir: Path,
+    conditions: list[str],
+    modes: list[str],
+) -> dict[tuple[str, str], list[Prediction]]:
+    """Runs every (condition, preprocess) combination, decoding each image once."""
     session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
 
-    ai_images = collect_images(dataset_dir / "ai")
-    real_images = collect_images(dataset_dir / "real")
+    ai_dir = dataset_dir / "ai"
+    labeled = [(p, True, generator_of(p, ai_dir)) for p in collect_images(ai_dir)]
+    labeled += [(p, False, "real") for p in collect_images(dataset_dir / "real")]
 
-    if not ai_images and not real_images:
+    if not labeled:
         print(
             f"No images found under {dataset_dir}/ai or {dataset_dir}/real. "
             "See this script's docstring for the expected layout.",
@@ -134,50 +221,160 @@ def evaluate(model_path: Path, dataset_dir: Path, threshold: float) -> list[Pred
         )
         sys.exit(1)
 
-    predictions: list[Prediction] = []
-    for path in ai_images:
-        predictions.append(Prediction(path, True, run_inference(session, path)))
-    for path in real_images:
-        predictions.append(Prediction(path, False, run_inference(session, path)))
+    results: dict[tuple[str, str], list[Prediction]] = {(c, m): [] for c in conditions for m in modes}
+    skipped = 0
+    for index, (path, is_ai, generator) in enumerate(labeled, start=1):
+        try:
+            image = Image.open(path).convert("RGB")
+        except Exception as e:  # noqa: BLE001 - one unreadable file must not abort the run
+            print(f"Skipping unreadable image {path}: {e}", file=sys.stderr)
+            skipped += 1
+            continue
+        for condition in conditions:
+            degraded = app_normalize(degrade(image, condition))
+            for mode in modes:
+                probability = run_inference(session, to_tensor(to_model_input(degraded, mode)))
+                results[(condition, mode)].append(Prediction(path, is_ai, probability, generator))
+        if index % 100 == 0:
+            print(f"  {index}/{len(labeled)} images", file=sys.stderr)
+    if skipped:
+        print(f"Skipped {skipped} unreadable images", file=sys.stderr)
+    return results
 
-    return predictions
+
+def evaluate(model_path: Path, dataset_dir: Path, threshold: float) -> list[Prediction]:
+    """Original single-configuration entry point (app behavior: original file, squash)."""
+    return evaluate_all(model_path, dataset_dir, ["original"], ["squash"])[("original", "squash")]
+
+
+def roc_auc(labels: np.ndarray, scores: np.ndarray) -> float | None:
+    """Mann-Whitney AUC with average ranks for ties (no sklearn dependency)."""
+    positives = int(labels.sum())
+    negatives = len(labels) - positives
+    if positives == 0 or negatives == 0:
+        return None
+    order = np.argsort(scores, kind="mergesort")
+    sorted_scores = scores[order]
+    ranks = np.empty(len(scores), dtype=np.float64)
+    i = 0
+    while i < len(scores):
+        j = i
+        while j + 1 < len(scores) and sorted_scores[j + 1] == sorted_scores[i]:
+            j += 1
+        ranks[order[i : j + 1]] = (i + j) / 2.0 + 1.0
+        i = j + 1
+    positive_rank_sum = ranks[labels == 1].sum()
+    return float((positive_rank_sum - positives * (positives + 1) / 2.0) / (positives * negatives))
+
+
+def reliability(labels: np.ndarray, scores: np.ndarray, bins: int = 10) -> tuple[float, list[dict]]:
+    """Expected calibration error of P(ai) plus the per-bin table behind it."""
+    edges = np.linspace(0.0, 1.0, bins + 1)
+    table = []
+    ece = 0.0
+    for b in range(bins):
+        low, high = edges[b], edges[b + 1]
+        mask = (scores >= low) & ((scores < high) if b < bins - 1 else (scores <= high))
+        count = int(mask.sum())
+        if count == 0:
+            table.append({"bin": f"{low:.1f}-{high:.1f}", "n": 0, "mean_score": None, "frac_ai": None})
+            continue
+        mean_score = float(scores[mask].mean())
+        frac_ai = float(labels[mask].mean())
+        ece += count / len(scores) * abs(mean_score - frac_ai)
+        table.append({"bin": f"{low:.1f}-{high:.1f}", "n": count, "mean_score": mean_score, "frac_ai": frac_ai})
+    return float(ece), table
+
+
+def _bands(scores: np.ndarray) -> dict[str, float]:
+    if len(scores) == 0:
+        return {"low": 0.0, "uncertain": 0.0, "high": 0.0}
+    return {
+        "low": float((scores < LOW_THRESHOLD).mean()),
+        "uncertain": float(((scores >= LOW_THRESHOLD) & (scores < HIGH_THRESHOLD)).mean()),
+        "high": float((scores >= HIGH_THRESHOLD).mean()),
+    }
+
+
+def compute_metrics(predictions: list[Prediction], threshold: float) -> dict:
+    labels = np.array([1 if p.ground_truth_is_ai else 0 for p in predictions], dtype=np.int64)
+    scores = np.array([p.ai_probability for p in predictions], dtype=np.float64)
+    predicted = scores >= threshold
+
+    tp = int((predicted & (labels == 1)).sum())
+    fn = int((~predicted & (labels == 1)).sum())
+    fp = int((predicted & (labels == 0)).sum())
+    tn = int((~predicted & (labels == 0)).sum())
+    total = len(predictions)
+    precision = tp / (tp + fp) if (tp + fp) else 0.0
+    recall = tp / (tp + fn) if (tp + fn) else 0.0
+    ece, reliability_table = reliability(labels, scores)
+
+    per_generator = {}
+    for generator in sorted({p.generator for p in predictions}):
+        generator_scores = np.array([p.ai_probability for p in predictions if p.generator == generator])
+        is_real = generator == "real"
+        per_generator[generator] = {
+            "n": int(len(generator_scores)),
+            # For AI generators: share detected; for real: share correctly passed.
+            "correct_at_threshold": float(
+                ((generator_scores < threshold) if is_real else (generator_scores >= threshold)).mean()
+            ),
+            "mean_score": float(generator_scores.mean()),
+            "bands": _bands(generator_scores),
+        }
+
+    return {
+        "n": total,
+        "n_ai": int(labels.sum()),
+        "n_real": int(total - labels.sum()),
+        "threshold": threshold,
+        "confusion": {"tp": tp, "fn": fn, "fp": fp, "tn": tn},
+        "accuracy": (tp + tn) / total if total else 0.0,
+        "precision": precision,
+        "recall": recall,
+        "f1": 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0,
+        "fpr": fp / (fp + tn) if (fp + tn) else 0.0,
+        "fnr": fn / (fn + tp) if (fn + tp) else 0.0,
+        "auc": roc_auc(labels, scores),
+        "ece": ece,
+        "reliability": reliability_table,
+        "bands_real": _bands(scores[labels == 0]),
+        "bands_ai": _bands(scores[labels == 1]),
+        "extreme_share": float(((scores > 0.99) | (scores < 0.01)).mean()) if total else 0.0,
+        "per_generator": per_generator,
+    }
 
 
 def print_report(predictions: list[Prediction], threshold: float) -> None:
-    true_positive = false_positive = true_negative = false_negative = 0
-
-    for prediction in predictions:
-        predicted_ai = prediction.ai_probability >= threshold
-        if prediction.ground_truth_is_ai and predicted_ai:
-            true_positive += 1
-        elif prediction.ground_truth_is_ai and not predicted_ai:
-            false_negative += 1
-        elif not prediction.ground_truth_is_ai and predicted_ai:
-            false_positive += 1
-        else:
-            true_negative += 1
-
-    total = len(predictions)
-    accuracy = (true_positive + true_negative) / total if total else 0.0
-    precision = true_positive / (true_positive + false_positive) if (true_positive + false_positive) else 0.0
-    recall = true_positive / (true_positive + false_negative) if (true_positive + false_negative) else 0.0
-    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
-    fpr = false_positive / (false_positive + true_negative) if (false_positive + true_negative) else 0.0
-    fnr = false_negative / (false_negative + true_positive) if (false_negative + true_positive) else 0.0
-
-    print(f"Images evaluated: {total} (threshold={threshold})")
+    m = compute_metrics(predictions, threshold)
+    c = m["confusion"]
+    print(f"Images evaluated: {m['n']} (threshold={threshold})")
     print()
     print("Confusion matrix (rows = actual, columns = predicted):")
     print(f"{'':>14}{'Predicted AI':>14}{'Predicted Real':>16}")
-    print(f"{'Actual AI':>14}{true_positive:>14}{false_negative:>16}")
-    print(f"{'Actual Real':>14}{false_positive:>14}{true_negative:>16}")
+    print(f"{'Actual AI':>14}{c['tp']:>14}{c['fn']:>16}")
+    print(f"{'Actual Real':>14}{c['fp']:>14}{c['tn']:>16}")
     print()
-    print(f"Accuracy:              {accuracy:.3f}")
-    print(f"Precision (AI class):  {precision:.3f}")
-    print(f"Recall (AI class):     {recall:.3f}")
-    print(f"F1 (AI class):         {f1:.3f}")
-    print(f"False positive rate:   {fpr:.3f}  (real images flagged as AI)")
-    print(f"False negative rate:   {fnr:.3f}  (AI images missed)")
+    print(f"Accuracy:              {m['accuracy']:.3f}")
+    print(f"Precision (AI class):  {m['precision']:.3f}")
+    print(f"Recall (AI class):     {m['recall']:.3f}")
+    print(f"F1 (AI class):         {m['f1']:.3f}")
+    print(f"False positive rate:   {m['fpr']:.3f}  (real images flagged as AI)")
+    print(f"False negative rate:   {m['fnr']:.3f}  (AI images missed)")
+    auc = m["auc"]
+    print(f"ROC-AUC:               {'n/a' if auc is None else f'{auc:.3f}'}")
+    print(f"ECE (calibration):     {m['ece']:.3f}  (0 = scores mean what they say)")
+    print(f"Scores >99% or <1%:    {m['extreme_share']:.1%}")
+    print()
+    print("App bands (LOW <0.30 / UNCERTAIN / HIGH >=0.70):")
+    for name in ("real", "ai"):
+        b = m[f"bands_{name}"]
+        print(f"  {name:>4}: LOW {b['low']:.1%}  UNCERTAIN {b['uncertain']:.1%}  HIGH {b['high']:.1%}")
+    print()
+    print("Per generator (share classified correctly at threshold, mean P(ai)):")
+    for generator, g in m["per_generator"].items():
+        print(f"  {generator:>16}: n={g['n']:<5} correct={g['correct_at_threshold']:.1%}  mean={g['mean_score']:.3f}")
 
 
 def main() -> None:
@@ -185,14 +382,43 @@ def main() -> None:
     parser.add_argument("--model", type=Path, required=True, help="Path to the .onnx classifier")
     parser.add_argument("--dataset", type=Path, required=True, help="Path to the dataset/ai, dataset/real folder")
     parser.add_argument("--threshold", type=float, default=0.5, help="AI-probability threshold for a positive prediction")
+    parser.add_argument("--conditions", default="original", help=f"Comma-separated subset of {','.join(CONDITIONS)}")
+    parser.add_argument("--preprocess", default="squash", help=f"Comma-separated subset of {','.join(PREPROCESS_MODES)}")
+    parser.add_argument("--dataset-name", default=None, help="Name used in JSON output (default: dataset folder name)")
+    parser.add_argument("--json-dir", type=Path, default=None, help="Write one JSON result per combination here")
     args = parser.parse_args()
+
+    conditions = [c.strip() for c in args.conditions.split(",") if c.strip()]
+    modes = [m.strip() for m in args.preprocess.split(",") if m.strip()]
+    for c in conditions:
+        if c not in CONDITIONS:
+            parser.error(f"unknown condition {c!r}; choose from {CONDITIONS}")
+    for m in modes:
+        if m not in PREPROCESS_MODES:
+            parser.error(f"unknown preprocess mode {m!r}; choose from {PREPROCESS_MODES}")
 
     if not args.model.exists():
         print(f"Model file not found: {args.model}", file=sys.stderr)
         sys.exit(1)
 
-    predictions = evaluate(args.model, args.dataset, args.threshold)
-    print_report(predictions, args.threshold)
+    dataset_name = args.dataset_name or args.dataset.resolve().name
+    results = evaluate_all(args.model, args.dataset, conditions, modes)
+    if args.json_dir:
+        args.json_dir.mkdir(parents=True, exist_ok=True)
+
+    for (condition, mode), predictions in results.items():
+        print()
+        print(f"=== {dataset_name} | condition={condition} | preprocess={mode} ===")
+        print_report(predictions, args.threshold)
+        if args.json_dir:
+            payload = {
+                "dataset": dataset_name,
+                "condition": condition,
+                "preprocess": mode,
+                "metrics": compute_metrics(predictions, args.threshold),
+            }
+            out = args.json_dir / f"{dataset_name}__{condition}__{mode}.json"
+            out.write_text(json.dumps(payload, indent=2))
 
 
 if __name__ == "__main__":

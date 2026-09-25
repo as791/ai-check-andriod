@@ -11,8 +11,8 @@ accepts the `pixel_values` input and emits two raw logits. If the file is ever
 missing from a build, `AIImageClassifierProvider` honestly reports the
 `AI_CLASSIFIER` signal as unavailable rather than fabricating a score.
 
-What is still **not** done: no independent accuracy benchmark has been run (see
-"Known limitations" and `tools/evaluate.py`), and `ModelConfig.BASE_CONFIDENCE` and
+What is still **not** done: no independent accuracy benchmark has been recorded yet
+(see "Measured accuracy" for the workflow that produces one), and `ModelConfig.BASE_CONFIDENCE` and
 the HIGH/UNCERTAIN/LOW thresholds are uncalibrated.
 
 **`Dafilab/ai-image-detector` is a gated repo on Hugging Face** — confirmed by
@@ -124,6 +124,41 @@ with `tools/evaluate.py` if you do this.
 - **Binary, single-signal.** It does not identify *which* generator produced an
   image, and (per this app's design) its output is never treated as proof on its
   own — see `internal-docs/ARCHITECTURE.md`'s evidence-aggregation model.
+
+## Measured accuracy
+
+The `Model eval` GitHub Actions workflow (`.github/workflows/model-eval.yml`,
+manual trigger only: Actions → Model eval → Run workflow) benchmarks the bundled
+`.onnx` against public labeled datasets. It runs on GitHub's runners because they
+have the open internet access (Hugging Face) that a sandboxed dev environment may not.
+
+- `tools/fetch_eval_data.py` streams a seeded, balanced sample (default 250 real +
+  250 AI per dataset, AI spread across generators) and writes the original file
+  bytes into `real/` and `ai/<generator>/`. Labels are never guessed: ambiguous
+  label columns fail loudly with the dataset's features printed.
+- `tools/evaluate.py` scores every image under 3 conditions × 2 preprocessing
+  modes. Conditions: `original`; `jpeg75`; and `social`, which caps the long edge at
+  1080 and applies JPEG q75, like an Instagram re-upload. Every condition then gets
+  the app's own normalization: long edge ≤2048 and JPEG q92, same as `ImageLoader`.
+  Preprocessing modes: `squash`, the app's current straight resize to 380×380, and
+  `center_crop`.
+  It reports AUC, accuracy/FPR/FNR at 0.5, the share of real/AI images landing
+  in each app band (LOW/UNCERTAIN/HIGH), calibration (ECE + reliability table) and
+  per-generator results.
+- `tools/eval_report.py` merges the per-run JSON into the job summary and the
+  `model-eval-results` artifact. Only numbers leave the runner, never images.
+
+Datasets: `Rajarshi-Roy-research/Defactify_Image_Dataset` (MS-COCO real photos;
+SD 2.1, SDXL, SD3, DALL-E 3, Midjourney v6) and
+`julienlucas/midjourney-dalle-sd-nanobananapro-dataset`. Caveats:
+- If the model was trained on either dataset, its numbers there are inflated.
+- Defactify's `Label_B` id → generator-name order follows the dataset card's
+  listing order and isn't independently verified. Only `0 = real` is checked,
+  against `Label_A`.
+- Neither dataset covers what the overlay actually captures, which is a
+  phone-screen crop of an Instagram post. `social` only approximates it.
+
+Results: not yet recorded. Paste the workflow's summary table here after the first run.
 
 ## Replacing the model file
 

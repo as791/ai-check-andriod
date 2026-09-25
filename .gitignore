@@ -34,3 +34,7 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Local model-eval outputs (tools/fetch_eval_data.py, tools/evaluate.py)
+eval-data/
+eval-results/

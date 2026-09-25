@@ -1,0 +1,86 @@
+name: Video eval
+
+# Benchmarks the app's Reels/Shorts path (5 sampled frames -> image classifier ->
+# average) on real vs AI-generated video. See tools/eval_video.py.
+#
+# Both datasets are gated research datasets: a maintainer must request access on
+# their Hugging Face pages (accepting their licenses: evaluation only, no
+# redistribution) and add a read token as the repository secret HF_TOKEN.
+# Videos are downloaded only inside the runner; only numbers are uploaded.
+on:
+  workflow_dispatch:
+    inputs:
+      videos_per_class:
+        description: Videos per class (real / AI) per dataset
+        default: '60'
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check access token
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::error::Add a Hugging Face read token as the HF_TOKEN repository secret after requesting access to DF26/DF26 and faridlab/deepaction_v1."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: pip install "onnxruntime>=1.18,<2" "pillow>=10,<12" "numpy>=1.26,<3" "huggingface_hub>=0.23,<1" opencv-python-headless
+
+      # DF26 (2026): talking-head public-speaking clips from 7 recent T2V/I2V models vs real.
+      - name: Fetch DF26 sample
+        continue-on-error: true
+        run: >
+          python tools/eval_video.py fetch --repo DF26/DF26 --out eval-video/df26
+          --real-regex '^real/' --ai-regex '^fake/'
+          --generator-regex '^fake/[^/]+/([^/]+)/'
+          --per-class ${{ inputs.videos_per_class }}
+
+      # DeepAction: human-action clips from AnimateDiff, CogVideoX, RunwayML, SD, Veo,
+      # VideoPoet vs matched real Pexels videos.
+      - name: Fetch DeepAction sample
+        continue-on-error: true
+        run: >
+          python tools/eval_video.py fetch --repo faridlab/deepaction_v1 --out eval-video/deepaction
+          --real-regex '(?i)^pexels/' --ai-regex '(?i)^(?!pexels/)[^/]+/'
+          --generator-regex '^([^/]+)/'
+          --per-class ${{ inputs.videos_per_class }}
+
+      - name: Evaluate
+        run: |
+          mkdir -p eval-results
+          for dir in eval-video/*/; do
+            name="$(basename "$dir")"
+            echo "::group::$name"
+            python tools/eval_video.py eval \
+              --model app/src/main/assets/models/ai-image-detector.onnx \
+              --dataset "$dir" --dataset-name "$name" \
+              --json-dir eval-results --scores-csv eval-results/video-scores.csv \
+              || echo "::warning::video evaluation failed for $name"
+            echo "::endgroup::"
+          done
+
+      - name: Report
+        if: always()
+        run: |
+          mkdir -p eval-results
+          python tools/eval_report.py eval-results > eval-results/report.md
+          cat eval-results/report.md >> "$GITHUB_STEP_SUMMARY"
+          cat eval-results/report.md
+
+      - name: Upload results (numbers only, no videos)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-eval-results
+          path: eval-results/

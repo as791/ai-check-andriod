@@ -47,6 +47,8 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from evaluate import (  # noqa: E402 - share the image pipeline + metrics with evaluate.py
+    COMMFOR_MODEL_NAME,
+    CommforOnnx,
     APP_CALIBRATION,
     APP_VIDEO_CALIBRATION,
     Prediction,
@@ -156,6 +158,7 @@ def evaluate_videos(args: argparse.Namespace) -> None:
         raise SystemExit(f"No videos under {ai_dir} or {real_dir}")
 
     name = args.dataset_name or args.dataset.resolve().name
+    commfor_onnx = CommforOnnx(args.commfor_onnx) if args.commfor_onnx else None
     candidates = []
     if args.candidates:
         from eval_candidates import CANDIDATES
@@ -190,6 +193,11 @@ def evaluate_videos(args: argparse.Namespace) -> None:
             # Current app: VideoSignalAggregator averages image-calibrated frame probabilities.
             probability = float(np.mean([calibrated_probability(g, *APP_CALIBRATION) for g in gaps]))
         predictions["app as shipped"].append(Prediction(path, is_ai, probability, generator, mean_gap))
+
+        if commfor_onnx is not None:
+            c_gap = float(np.mean([commfor_onnx.gap(f) for f in normalized]))
+            predictions[COMMFOR_MODEL_NAME].append(
+                Prediction(path, is_ai, calibrated_probability(c_gap), generator, c_gap))
 
         for candidate in candidates:
             try:
@@ -248,6 +256,8 @@ def main() -> None:
     e.add_argument("--scores-csv", type=Path, default=None,
                    help="Per-video mean frame logit gap (what tools/calibrate.py fits the video calibration on)")
     e.add_argument("--candidates", default=None, help="Also score these tools/eval_candidates.py models")
+    e.add_argument("--commfor-onnx", type=Path, default=None,
+                   help="Also score this Community Forensics ONNX (the app's second ensemble model)")
     e.add_argument("--video-calibration", default=None,
                    help="SLOPE,INTERCEPT (or 'app') applied to the mean frame logit gap, as the app's video path does")
 

@@ -226,6 +226,33 @@ def run_inference(session: "ort.InferenceSession", tensor: np.ndarray) -> float:
     return logit_difference(outputs[0])
 
 
+COMMFOR_MODEL_NAME = "commfor-224 (app onnx)"
+COMMFOR_SIZE = 224
+COMMFOR_RESIZE = 256
+
+
+def commfor_input(image: Image.Image) -> np.ndarray:
+    """Community Forensics 224 input as the app computes it: short side -> 256 (bilinear),
+    center crop 224, ImageNet normalization, NCHW. Mirrors the authors' test transform."""
+    scale = COMMFOR_RESIZE / min(image.size)
+    width = max(COMMFOR_RESIZE, round(image.width * scale))
+    height = max(COMMFOR_RESIZE, round(image.height * scale))
+    resized = image.resize((width, height), Image.BILINEAR)
+    left, top = (width - COMMFOR_SIZE) // 2, (height - COMMFOR_SIZE) // 2
+    return to_tensor(resized.crop((left, top, left + COMMFOR_SIZE, top + COMMFOR_SIZE)))
+
+
+class CommforOnnx:
+    """The Community Forensics ONNX file the app bundles; one output logit, sigmoid = P(fake)."""
+
+    def __init__(self, path: Path):
+        self.session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        self.input_name = self.session.get_inputs()[0].name
+
+    def gap(self, image: Image.Image) -> float:
+        return float(self.session.run(None, {self.input_name: commfor_input(image)})[0].reshape(-1)[0])
+
+
 def collect_images(directory: Path) -> list[Path]:
     if not directory.is_dir():
         return []
@@ -244,8 +271,12 @@ def evaluate_all(
     modes: list[str],
     slope: float = 1.0,
     intercept: float = 0.0,
+    commfor: "CommforOnnx | None" = None,
 ) -> dict[tuple[str, str], list[Prediction]]:
-    """Runs every (condition, preprocess) combination, decoding each image once."""
+    """Runs every (condition, preprocess) combination, decoding each image once.
+
+    With `commfor`, also scores the bundled Community Forensics ONNX on the same degraded
+    image under the key (condition, "commfor") - raw sigmoid, for ensemble fitting."""
     session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
 
     ai_dir = dataset_dir / "ai"
@@ -261,6 +292,8 @@ def evaluate_all(
         sys.exit(1)
 
     results: dict[tuple[str, str], list[Prediction]] = {(c, m): [] for c in conditions for m in modes}
+    if commfor is not None:
+        results.update({(c, "commfor"): [] for c in conditions})
     skipped = 0
     for index, (path, is_ai, generator) in enumerate(labeled, start=1):
         try:
@@ -280,6 +313,9 @@ def evaluate_all(
                 results[(condition, mode)].append(
                     Prediction(path, is_ai, calibrated_probability(d, slope, intercept), generator, d)
                 )
+            if commfor is not None:
+                c = commfor.gap(degraded)
+                results[(condition, "commfor")].append(Prediction(path, is_ai, calibrated_probability(c), generator, c))
         if index % 100 == 0:
             print(f"  {index}/{len(labeled)} images", file=sys.stderr)
     if skipped:
@@ -432,6 +468,8 @@ def main() -> None:
     parser.add_argument("--dataset-name", default=None, help="Name used in JSON output (default: dataset folder name)")
     parser.add_argument("--json-dir", type=Path, default=None, help="Write one JSON result per combination here")
     parser.add_argument("--model-name", default=None, help="Label for this configuration in reports")
+    parser.add_argument("--commfor-onnx", type=Path, default=None,
+                        help="Also score this Community Forensics ONNX (the app's second ensemble model)")
     parser.add_argument("--scores-csv", type=Path, default=None, help="Append per-image logit differences here")
     parser.add_argument("--calibration", default=None, help="SLOPE,INTERCEPT as in ModelConfig.interpretOutput, or 'app' for the shipped values")
     args = parser.parse_args()
@@ -458,25 +496,32 @@ def main() -> None:
         sys.exit(1)
 
     dataset_name = args.dataset_name or args.dataset.resolve().name
-    results = evaluate_all(args.model, args.dataset, conditions, modes, slope, intercept)
+    commfor = CommforOnnx(args.commfor_onnx) if args.commfor_onnx else None
+    results = evaluate_all(args.model, args.dataset, conditions, modes, slope, intercept, commfor)
     if args.json_dir:
         args.json_dir.mkdir(parents=True, exist_ok=True)
 
+    def labels(mode: str) -> tuple[str | None, str]:
+        """(model name, preprocess) for a results key; the Community Forensics rows are their own model."""
+        return (COMMFOR_MODEL_NAME, "native") if mode == "commfor" else (args.model_name, mode)
+
     for (condition, mode), predictions in results.items():
+        model_name, preprocess_label = labels(mode)
         print()
-        print(f"=== {dataset_name} | condition={condition} | preprocess={mode} ===")
+        print(f"=== {dataset_name} | {model_name or 'bundled'} | condition={condition} | preprocess={preprocess_label} ===")
         print_report(predictions, args.threshold)
         if args.json_dir:
             payload = {
-                **({"model": args.model_name} if args.model_name else {}),
+                **({"model": model_name} if model_name else {}),
                 "dataset": dataset_name,
                 "condition": condition,
-                "preprocess": mode,
-                "calibration": {"slope": slope, "intercept": intercept} if args.calibration else None,
+                "preprocess": preprocess_label,
+                "calibration": ({"slope": slope, "intercept": intercept}
+                                if args.calibration and mode != "commfor" else None),
                 "metrics": compute_metrics(predictions, args.threshold),
             }
-            prefix = f"{args.model_name.replace(' ', '_').replace('/', '_')}__" if args.model_name else ""
-            out = args.json_dir / f"{prefix}{dataset_name}__{condition}__{mode}.json"
+            prefix = f"{model_name.replace(' ', '_').replace('/', '_')}__" if model_name else ""
+            out = args.json_dir / f"{prefix}{dataset_name}__{condition}__{preprocess_label}.json"
             out.write_text(json.dumps(payload, indent=2))
 
     if args.scores_csv:
@@ -487,8 +532,9 @@ def main() -> None:
                 writer.writerow(["model", "dataset", "condition", "preprocess", "image", "generator", "is_ai",
                                  "logit_diff"])
             for (condition, mode), predictions in results.items():
+                model_name, preprocess_label = labels(mode)
                 for p in predictions:
-                    writer.writerow([args.model_name or "dafilab (bundled)", dataset_name, condition, mode,
+                    writer.writerow([model_name or "dafilab (bundled)", dataset_name, condition, preprocess_label,
                                      p.path.relative_to(args.dataset).as_posix(), p.generator,
                                      int(p.ground_truth_is_ai), f"{p.logit_diff:.6f}"])
 

@@ -1,0 +1,121 @@
+name: Ensemble build
+
+# Builds and verifies the model files for the app's two-model ensemble (bundled
+# detector + Community Forensics 224), benchmarks the exact files the app will bundle
+# on photos and video, and fits the ensemble's standardization + calibration
+# (tools/ensemble_calibrate.py). Manual only. If every parity check passes, the model
+# files and the fitted parameters are pushed to the `model-assets` branch for review;
+# nothing lands on main from here. Images and videos never leave the runner.
+on:
+  workflow_dispatch:
+    inputs:
+      samples_per_class:
+        description: Images per class (real / AI) per image dataset
+        default: '250'
+      videos_per_class:
+        description: Videos per class (real / AI) per video dataset
+        default: '100'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies (CPU-only torch)
+        run: |
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install "onnxruntime>=1.18,<2" "onnx>=1.16,<2" onnxscript "pillow>=10,<12" "numpy>=1.26,<3" \
+            "datasets>=2.19,<5" "timm>=1.0,<2" "transformers>=4.44,<5" "huggingface_hub>=0.23,<1" \
+            opencv-python-headless
+
+      - name: Fetch image datasets
+        run: tools/fetch_all_eval_data.sh ${{ inputs.samples_per_class }}
+
+      - name: Build model files (export, fp16 weights, parity, app ORT compatibility)
+        run: |
+          mkdir -p eval-results
+          python tools/build_models.py --dataset eval-data/defactify \
+            --bundled app/src/main/assets/models/ai-image-detector.onnx \
+            --out model-assets --report eval-results/parity.md
+
+      - name: Benchmark the built files on photos
+        run: |
+          for dir in eval-data/*/; do
+            name="$(basename "$dir")"
+            echo "::group::$name"
+            python tools/evaluate.py --model model-assets/ai-image-detector.onnx \
+              --dataset "$dir" --dataset-name "$name" \
+              --conditions original,jpeg75,social --preprocess avg --calibration app \
+              --model-name "app as shipped" --commfor-onnx model-assets/commfor-224.onnx \
+              --json-dir eval-results --scores-csv eval-results/image-scores.csv > /dev/null
+            echo "::endgroup::"
+          done
+
+      - name: Fetch video samples
+        run: |
+          python tools/eval_video.py fetch --repo DF26/DF26 --out eval-video/df26 \
+            --real-regex '^real/' --ai-regex '^fake/' --generator-regex '^fake/[^/]+/([^/]+)/' \
+            --per-class ${{ inputs.videos_per_class }}
+          python tools/eval_video.py fetch --repo faridlab/deepaction_v1 --out eval-video/deepaction \
+            --real-regex '(?i)^pexels/' --ai-regex '(?i)^(?!pexels/)[^/]+/' --generator-regex '^([^/]+)/' \
+            --per-class ${{ inputs.videos_per_class }}
+
+      - name: Benchmark the built files on video
+        run: |
+          for dir in eval-video/*/; do
+            name="$(basename "$dir")"
+            echo "::group::$name"
+            python tools/eval_video.py eval --model model-assets/ai-image-detector.onnx \
+              --dataset "$dir" --dataset-name "$name" --video-calibration app \
+              --commfor-onnx model-assets/commfor-224.onnx \
+              --json-dir eval-results --scores-csv eval-results/video-scores.csv > /dev/null
+            echo "::endgroup::"
+          done
+
+      - name: Fit the ensemble
+        run: |
+          python tools/ensemble_calibrate.py --image-scores eval-results/image-scores.csv \
+            --video-scores eval-results/video-scores.csv --json eval-results/ensemble-params.json \
+            > eval-results/ensemble.md
+          cat eval-results/ensemble.md
+
+      - name: Report
+        if: always()
+        run: |
+          mkdir -p eval-results
+          {
+            [ -f eval-results/parity.md ] && cat eval-results/parity.md
+            [ -f eval-results/ensemble.md ] && cat eval-results/ensemble.md
+            python tools/eval_report.py eval-results
+          } > eval-results/report.md
+          cat eval-results/report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results (numbers only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ensemble-build-results
+          path: eval-results/
+
+      - name: Push model files + parameters to the model-assets branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b model-assets
+          cp model-assets/*.onnx app/src/main/assets/models/
+          cp eval-results/ensemble-params.json internal-docs/ensemble-params.json
+          cp eval-results/report.md internal-docs/ensemble-build-report.md
+          git add app/src/main/assets/models/*.onnx internal-docs/ensemble-params.json internal-docs/ensemble-build-report.md
+          git commit -m "Ensemble build ${{ github.run_id }}: fp16-weight models + fitted ensemble parameters"
+          git push -f origin model-assets

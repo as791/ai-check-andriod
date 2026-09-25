@@ -232,13 +232,17 @@ COMMFOR_RESIZE = 256
 
 
 def commfor_input(image: Image.Image) -> np.ndarray:
-    """Community Forensics 224 input as the app computes it: short side -> 256 (bilinear),
-    center crop 224, ImageNet normalization, NCHW. Mirrors the authors' test transform."""
-    scale = COMMFOR_RESIZE / min(image.size)
-    width = max(COMMFOR_RESIZE, round(image.width * scale))
-    height = max(COMMFOR_RESIZE, round(image.height * scale))
+    """Community Forensics 224 input as the app computes it, matching the authors' torchvision
+    test transform pixel for pixel: short side -> 256 with the long side *truncated*
+    (torchvision Resize), center-crop offsets rounded half-to-even (torchvision CenterCrop),
+    ImageNet normalization, NCHW. Off-by-one-pixel differences move this ViT's logit by up
+    to ~1, so the geometry must match exactly (checked by tools/build_models.py)."""
+    short, long = sorted(image.size)
+    new_long = int(COMMFOR_RESIZE * long / short)
+    width, height = (COMMFOR_RESIZE, new_long) if image.width <= image.height else (new_long, COMMFOR_RESIZE)
     resized = image.resize((width, height), Image.BILINEAR)
-    left, top = (width - COMMFOR_SIZE) // 2, (height - COMMFOR_SIZE) // 2
+    left = int(round((width - COMMFOR_SIZE) / 2.0))
+    top = int(round((height - COMMFOR_SIZE) / 2.0))
     return to_tensor(resized.crop((left, top, left + COMMFOR_SIZE, top + COMMFOR_SIZE)))
 
 

@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from evaluate import (  # noqa: E402
     INPUT_NAME,
     CommforOnnx,
+    commfor_input,
     app_normalize,
     collect_images,
     logit_difference,
@@ -81,8 +82,14 @@ def main() -> None:
     except TypeError:  # older torch without the `dynamo` switch
         torch.onnx.export(module.eval(), (example,), str(fp32_commfor), **export_kwargs)
     onnx_commfor = CommforOnnx(fp32_commfor)
+    # (a) The export alone: identical input tensor through PyTorch and ONNX Runtime.
+    with torch.no_grad():
+        diffs = [abs(float(candidate.model(torch.from_numpy(commfor_input(im))).reshape(-1)[0]) - onnx_commfor.gap(im))
+                 for im in images]
+    rows.append(("commfor-224: PyTorch vs ONNX export, same input", max(diffs), np.mean(diffs)))
+    # (b) End to end: authors' preprocessing + PyTorch vs the app's preprocessing + ONNX.
     diffs = [abs(candidate.logit_diff(im) - onnx_commfor.gap(im)) for im in images]
-    rows.append(("commfor-224: PyTorch (authors' preprocessing) vs ONNX (app preprocessing)", max(diffs), np.mean(diffs)))
+    rows.append(("commfor-224: authors' preprocessing + PyTorch vs app preprocessing + ONNX", max(diffs), np.mean(diffs)))
 
     # 3. fp16 weights for both models.
     fp16_bundled = args.out / BUNDLED_NAME

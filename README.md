@@ -129,10 +129,18 @@ only ever bundled at build time.
   `app/src/main/assets/models/ai-image-detector.onnx` and runs on-device. If
   that file is ever missing from a build, the classifier signal is reported as
   unavailable (and the Settings screen says so) rather than faked.
-- **No independent accuracy benchmark has been run** against the bundled
-  classifier model in this project. `tools/evaluate.py` exists specifically to
-  produce that number once a labeled dataset is available — do not treat this
-  app's percentages as validated accuracy until that's been done.
+- **Measured accuracy is moderate.** On two public real-vs-AI image datasets
+  (500 images each), the bundled classifier reaches an AUC of 0.91 and 0.80
+  (1.0 = perfect, 0.5 = coin flip). On the harder set, about a third of real
+  images were scored as likely AI, and DALL·E 3 images were caught only about
+  half the time. Its raw scores were also far too confident. Calibrating them
+  and evaluating stronger models is the current focus: see
+  [issue #14](https://github.com/as791/genned/issues/14) and
+  `internal-docs/MODEL.md` "Measured accuracy". Anyone can re-run the benchmark
+  from the repo's Actions tab ("Model eval").
+- **Video is checked frame by frame.** Reels and Shorts are analyzed by running
+  the image classifier on sampled frames. There is no motion or audio analysis,
+  and no video benchmark yet.
 - Like every AI-image detector, the classifier's training data has a cutoff
   and will be weaker against newer generators; compression, screenshotting,
   and intentional adversarial editing can all shift results in either
@@ -140,6 +148,20 @@ only ever bundled at build time.
 - The evidence weights and HIGH/UNCERTAIN/LOW thresholds
   (`domain/evidence/EvidenceWeights.kt`) are a documented, transparent
   starting point — not a statistically calibrated model.
+
+## Contributing
+
+Genned is early, and help is very welcome, especially from people working on AI
+provenance, computer vision or Android. Good places to start:
+
+- [#14 Detector accuracy](https://github.com/as791/genned/issues/14): calibrate
+  the scores, and benchmark and propose better on-device detectors.
+- [#1 Public release readiness](https://github.com/as791/genned/issues/1): the
+  checklist for a store release.
+
+Any change to detection should come with numbers from the `Model eval` workflow
+(`tools/evaluate.py`), not just anecdotes. Images never leave the device, and
+changes must keep it that way.
 
 ## Documentation
 

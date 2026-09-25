@@ -36,6 +36,28 @@ class PngChunkReaderTest {
         assertThat(chunks[0].value).isEqualTo("Midjourney v6 prompt: a cat")
     }
 
+    @Test(timeout = 5000)
+    fun `returns promptly for a zTXt chunk that requires a preset dictionary`() {
+        val compressed = deflate("Steps: 20".toByteArray(Charsets.ISO_8859_1), dictionary = "dict".toByteArray())
+        val png = pngWith(chunk("zTXt", "parameters".toByteArray(Charsets.ISO_8859_1) + byteArrayOf(0, 0) + compressed))
+        val file = writeTempPng(png)
+
+        val chunks = PngChunkReader.readTextChunks(file)
+
+        assertThat(chunks.map { it.value }.none { it.contains("Steps") }).isTrue()
+    }
+
+    @Test
+    fun `caps the inflated size of a zTXt chunk`() {
+        val png = pngWith(compressedTextChunk("Comment", "a".repeat(5_000_000)))
+        val file = writeTempPng(png)
+
+        val chunks = PngChunkReader.readTextChunks(file)
+
+        assertThat(chunks).hasSize(1)
+        assertThat(chunks[0].value.length).isAtMost(1 shl 20)
+    }
+
     @Test
     fun `returns an empty list for a file that is not a PNG`() {
         val file = File.createTempFile("not_a_png", ".bin")
@@ -72,8 +94,9 @@ class PngChunkReaderTest {
         return chunk("zTXt", data)
     }
 
-    private fun deflate(input: ByteArray): ByteArray {
+    private fun deflate(input: ByteArray, dictionary: ByteArray? = null): ByteArray {
         val deflater = Deflater()
+        if (dictionary != null) deflater.setDictionary(dictionary)
         deflater.setInput(input)
         deflater.finish()
         val output = java.io.ByteArrayOutputStream()

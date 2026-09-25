@@ -16,6 +16,9 @@ object PngChunkReader {
         0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
     )
 
+    // Generation parameters are a few KB at most; this bounds zip-bomb chunks.
+    private const val MAX_INFLATED_BYTES = 1 shl 20
+
     data class TextChunk(val keyword: String, val value: String)
 
     fun readTextChunks(file: File): List<TextChunk> {
@@ -93,20 +96,24 @@ object PngChunkReader {
         return TextChunk(keyword, value)
     }
 
-    private fun inflate(compressed: ByteArray): ByteArray? = try {
+    private fun inflate(compressed: ByteArray): ByteArray? {
         val inflater = Inflater()
-        inflater.setInput(compressed)
-        val output = java.io.ByteArrayOutputStream(compressed.size * 3)
-        val buffer = ByteArray(4096)
-        while (!inflater.finished()) {
-            val count = inflater.inflate(buffer)
-            if (count == 0 && inflater.needsInput()) break
-            output.write(buffer, 0, count)
+        return try {
+            inflater.setInput(compressed)
+            val output = java.io.ByteArrayOutputStream(minOf(compressed.size * 3, MAX_INFLATED_BYTES))
+            val buffer = ByteArray(4096)
+            while (!inflater.finished() && output.size() < MAX_INFLATED_BYTES) {
+                val count = inflater.inflate(buffer)
+                // 0 also covers needsDictionary(), which would otherwise spin forever.
+                if (count == 0) break
+                output.write(buffer, 0, minOf(count, MAX_INFLATED_BYTES - output.size()))
+            }
+            output.toByteArray()
+        } catch (e: Exception) {
+            null
+        } finally {
+            inflater.end()
         }
-        inflater.end()
-        output.toByteArray()
-    } catch (e: Exception) {
-        null
     }
 
     private fun readInt32BigEndian(bytes: ByteArray, offset: Int): Int =

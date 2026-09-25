@@ -200,16 +200,17 @@ class OverlayCaptureService : Service() {
         screenHeight = metrics.heightPixels
         screenDensity = metrics.densityDpi
         // A Service isn't a UI context; if the platform refuses window metrics here, crop without insets.
-        val insets = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        val (topInset, bottomInset) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             runCatching {
-                windowManager.currentWindowMetrics.windowInsets
+                val insets = windowManager.currentWindowMetrics.windowInsets
                     .getInsetsIgnoringVisibility(WindowInsets.Type.systemBars())
-            }.getOrNull()
+                insets.top to insets.bottom
+            }.getOrNull() ?: (0 to 0)
         } else {
-            null
+            0 to 0
         }
-        screenTopInset = insets?.top ?: 0
-        screenBottomInset = insets?.bottom ?: 0
+        screenTopInset = topInset
+        screenBottomInset = bottomInset
 
         val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         val projection = projectionManager.getMediaProjection(resultCode, data)

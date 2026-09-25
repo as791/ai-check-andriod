@@ -1,9 +1,13 @@
 name: Model compare
 
 # Benchmarks candidate replacement detectors (tools/eval_candidates.py) against the
-# bundled model on the same images, conditions and metrics as `Model eval`.
+# bundled model on the same images, conditions and metrics as `Model eval`, then:
+#   - checks each one can ship on-device as ONNX (tools/onnx_feasibility.py:
+#     export, parity, int8 quantization, size, latency), and
+#   - tests whether an ensemble of them beats the best single model within the
+#     on-device budget (tools/ensemble.py, cross-dataset).
 # Manual only; downloads each candidate from Hugging Face inside the runner.
-# Only numbers are uploaded, never images. See internal-docs/MODEL.md.
+# Only numbers are uploaded, never images or exported models. See internal-docs/MODEL.md.
 on:
   workflow_dispatch:
     inputs:
@@ -29,7 +33,7 @@ jobs:
         run: |
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install "onnxruntime>=1.18,<2" "pillow>=10,<12" "numpy>=1.26,<3" "datasets>=2.19,<5" \
-            "timm>=1.0,<2" "transformers>=4.44,<5" "huggingface_hub>=0.23,<1"
+            "timm>=1.0,<2" "transformers>=4.44,<5" "huggingface_hub>=0.23,<1" "onnx>=1.16,<2" onnxscript
 
       - name: Fetch datasets
         run: tools/fetch_all_eval_data.sh ${{ inputs.samples_per_class }}
@@ -43,8 +47,10 @@ jobs:
             python tools/evaluate.py \
               --model app/src/main/assets/models/ai-image-detector.onnx \
               --dataset "$dir" --dataset-name "$name" \
-              --conditions original,jpeg75,social --preprocess squash \
-              --json-dir eval-results || echo "::warning::bundled evaluation failed for $name"
+              --conditions original,jpeg75,social --preprocess avg --calibration app \
+              --model-name "app as shipped" --json-dir eval-results \
+              --scores-csv eval-results/bundled-scores.csv \
+              || echo "::warning::bundled evaluation failed for $name"
             echo "::endgroup::"
             echo "::group::candidates | $name"
             python tools/eval_candidates.py \
@@ -55,11 +61,30 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: ONNX feasibility (export, parity, int8, size, latency)
+        continue-on-error: true
+        run: |
+          python tools/onnx_feasibility.py --dataset eval-data/defactify \
+            --candidates "${{ inputs.candidates }}" --out-dir onnx-export \
+            --json eval-results/onnx_feasibility.json > eval-results/onnx_feasibility.md
+          cat eval-results/onnx_feasibility.md
+
+      - name: Ensemble analysis
+        continue-on-error: true
+        run: |
+          python tools/ensemble.py eval-results/bundled-scores.csv eval-results/candidate-scores.csv \
+            --feasibility eval-results/onnx_feasibility.json --json eval-results/ensemble.json \
+            > eval-results/ensemble.md
+          cat eval-results/ensemble.md
+
       - name: Report
         if: always()
         run: |
           mkdir -p eval-results
           python tools/eval_report.py eval-results > eval-results/report.md
+          for part in onnx_feasibility ensemble; do
+            [ -f "eval-results/$part.md" ] && cat "eval-results/$part.md" >> eval-results/report.md
+          done
           cat eval-results/report.md >> "$GITHUB_STEP_SUMMARY"
           cat eval-results/report.md
 

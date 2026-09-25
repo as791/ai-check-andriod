@@ -26,8 +26,16 @@ version — see internal-docs/ARCHITECTURE.md.
 Tracked in [#14](https://github.com/as791/genned/issues/14).
 - Benchmark the bundled model (`Model eval`). Done: baseline in
   `internal-docs/MODEL.md`.
-- Calibrate scores and set HIGH/LOW bands from data.
+- Calibrate scores and set HIGH/LOW bands from data. Done: two-view averaging,
+  Platt calibration, HIGH ≥ 90% / LOW < 25%.
 - Compare candidate detectors (`Model compare`) and switch only for a clear win.
+- **Multi-model ensemble feasibility, ONNX only** (pulled forward from V2).
+  Using only the benchmarked models: export each to ONNX, verify parity with
+  PyTorch, measure int8/fp32 size and latency (`tools/onnx_feasibility.py`),
+  then test whether any combination beats the best single model, weights fit on
+  one dataset and scored on the other (`tools/ensemble.py`). Ship an ensemble
+  only if it clears the on-device budget and beats the best affordable single
+  model by ≥3 points of AI caught at 5% false alarms.
 - Benchmark the Reels path on real vs AI video (`Video eval`, which needs the
   `HF_TOKEN` secret for its gated datasets).
 
@@ -42,16 +50,19 @@ the defense with the best worst-case robustness that stays within the
 clean-accuracy and on-device cost budget. It starts once Phase 1 has fixed the
 model, because a defense is evaluated on a specific detector.
 
+Order: Phase 1 (including the ensemble decision) → Phase 2 → V2. The goal is a
+working Android app with good, well-calibrated results before any other platform.
+
 ## V2
 
-- iOS.
-- An improved/ensembled classifier once real evaluation data
-  (`tools/evaluate.py`) exists to justify the choice.
+- An improved/ensembled classifier: **moved into Phase 1** (ensemble
+  feasibility above), since the evaluation data now exists.
 - Batch image/video scanning (multiple items in one session — the app currently
   analyzes only the first item of a multi-select share).
 - Additional provenance standards beyond C2PA if relevant ones emerge.
-- Multi-model ensemble (combine more than one classifier's output, weighted by
-  measured per-model reliability).
+- Multi-model ensemble: **moved into Phase 1** (see above). V2 keeps only
+  follow-ups, such as re-fitting the ensemble weights as new models and datasets
+  arrive.
 
 ## V3
 
@@ -70,6 +81,11 @@ model, because a defense is evaluated on a specific detector.
   and privacy documentation before any implementation work.
 - A browser extension.
 - A public API.
+
+## Later
+
+- iOS. Only after the Android app ships with good, calibrated results and
+  Phases 1–2 are done.
 
 ## Experimental — screen overlay (implemented, opt-in, off by default)
 

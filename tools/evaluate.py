@@ -48,8 +48,10 @@ Preprocessing modes (image -> 380x380 model input):
 Scores are raw model probabilities unless --calibration SLOPE,INTERCEPT is given,
 in which case P(ai) = sigmoid(SLOPE * (ai_logit - human_logit) + INTERCEPT) - the
 same transform ModelConfig.interpretOutput applies on-device. --scores-csv writes
-one row per image and combination (dataset, condition, preprocess, generator,
-is_ai, logit_diff) for tools/calibrate.py; it never contains file names or pixels.
+one row per image and combination (model, dataset, condition, preprocess, image, generator,
+is_ai, logit_diff) for tools/calibrate.py and tools/ensemble.py. `image` is the
+sample's path inside the fetched dataset folder (e.g. real/00012.jpg), used only to
+join models per image; no pixels or source file names.
 
 Resizing uses bilinear filtering to match Android's
 Bitmap.createScaledBitmap(..., filter = true). Normalization/channel order MUST
@@ -479,11 +481,13 @@ def main() -> None:
         with args.scores_csv.open("a", newline="") as f:
             writer = csv.writer(f)
             if new_file:
-                writer.writerow(["dataset", "condition", "preprocess", "generator", "is_ai", "logit_diff"])
+                writer.writerow(["model", "dataset", "condition", "preprocess", "image", "generator", "is_ai",
+                                 "logit_diff"])
             for (condition, mode), predictions in results.items():
                 for p in predictions:
-                    writer.writerow([dataset_name, condition, mode, p.generator, int(p.ground_truth_is_ai),
-                                     f"{p.logit_diff:.6f}"])
+                    writer.writerow([args.model_name or "dafilab (bundled)", dataset_name, condition, mode,
+                                     p.path.relative_to(args.dataset).as_posix(), p.generator,
+                                     int(p.ground_truth_is_ai), f"{p.logit_diff:.6f}"])
 
 
 if __name__ == "__main__":

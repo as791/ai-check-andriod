@@ -56,6 +56,18 @@ class Candidate:
 
     def logit_diff(self, image: Image.Image) -> float: ...
 
+    def export_module(self):
+        """(torch module mapping pixel_values -> output, example pixel_values) for ONNX export."""
+        raise NotImplementedError
+
+    def logit_diff_from_output(self, output: np.ndarray) -> float:
+        """Same reduction as logit_diff, applied to an exported model's raw output."""
+        raise NotImplementedError
+
+    def preprocess_array(self, image: Image.Image) -> np.ndarray:
+        """This candidate's native preprocessing as a float32 NCHW array."""
+        raise NotImplementedError
+
 
 class CommunityForensics(Candidate):
     """OwensLab Community Forensics ViT-S (CVPR 2025), trained on ~4.8k generators. MIT.
@@ -112,6 +124,15 @@ class CommunityForensics(Candidate):
             out = self.model(self.transform(image).unsqueeze(0))
         return float(out.reshape(-1)[0])
 
+    def export_module(self):
+        return self.model, self.torch.zeros(1, 3, self.input_size, self.input_size)
+
+    def logit_diff_from_output(self, output: np.ndarray) -> float:
+        return float(output.reshape(-1)[0])
+
+    def preprocess_array(self, image: Image.Image) -> np.ndarray:
+        return self.transform(image).unsqueeze(0).numpy()
+
 
 class HFClassifier(Candidate):
     """Any 2-class transformers image classifier; AI/real labels read from config.id2label."""
@@ -146,6 +167,27 @@ class HFClassifier(Candidate):
         with self.torch.no_grad():
             logits = self.model(**self.processor(images=image, return_tensors="pt")).logits[0]
         return float(logits[self.ai_index] - logits[self.real_index])
+
+    def export_module(self):
+        model = self.model
+
+        class LogitsOnly(self.torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.inner = model
+
+            def forward(self, pixel_values):
+                return self.inner(pixel_values=pixel_values).logits
+
+        example = self.processor(images=Image.new("RGB", (512, 512)), return_tensors="pt")["pixel_values"]
+        return LogitsOnly().eval(), example
+
+    def logit_diff_from_output(self, output: np.ndarray) -> float:
+        logits = output.reshape(-1)
+        return float(logits[self.ai_index] - logits[self.real_index])
+
+    def preprocess_array(self, image: Image.Image) -> np.ndarray:
+        return self.processor(images=image, return_tensors="np")["pixel_values"].astype(np.float32)
 
 
 CANDIDATES: dict[str, Candidate] = {
@@ -225,10 +267,12 @@ def main() -> None:
             with args.scores_csv.open("a", newline="") as f:
                 writer = csv.writer(f)
                 if new_file:
-                    writer.writerow(["model", "dataset", "condition", "preprocess", "generator", "is_ai", "logit_diff"])
+                    writer.writerow(["model", "dataset", "condition", "preprocess", "image", "generator", "is_ai",
+                                     "logit_diff"])
                 for condition, predictions in results.items():
                     for p in predictions:
-                        writer.writerow([name, dataset_name, condition, "native", p.generator,
+                        writer.writerow([name, dataset_name, condition, "native",
+                                         p.path.relative_to(args.dataset).as_posix(), p.generator,
                                          int(p.ground_truth_is_ai), f"{p.logit_diff:.6f}"])
 
 

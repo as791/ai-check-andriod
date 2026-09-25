@@ -42,6 +42,8 @@
     <string name="signal_generator_metadata">Generator metadata</string>
     <string name="signal_watermark">Known watermark</string>
     <string name="signal_exif_metadata">Metadata</string>
+    <string name="signal_exif_camera_metadata_present">Camera metadata present</string>
+    <string name="signal_exif_no_camera_metadata">No camera metadata</string>
 
     <!-- History -->
     <string name="history_title">History</string>

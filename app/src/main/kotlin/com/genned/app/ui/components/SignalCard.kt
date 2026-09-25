@@ -45,6 +45,12 @@ fun SignalCard(signal: DetectionSignal, modifier: Modifier = Modifier) {
                 signal.availability == SignalAvailability.UNAVAILABLE -> "Unavailable"
                 signal.availability == SignalAvailability.ERROR -> "Couldn't be checked"
                 signal.type == SignalType.AI_CLASSIFIER && score != null -> "${(score * 100).toInt()}% AI probability"
+                // Inverted polarity: ExifMetadataProvider scores 0 when camera metadata is present.
+                signal.type == SignalType.EXIF_METADATA -> if (score == 0f) {
+                    stringResource(R.string.signal_exif_camera_metadata_present)
+                } else {
+                    stringResource(R.string.signal_exif_no_camera_metadata)
+                }
                 score != null && score > 0f -> "Found"
                 else -> "Not found"
             }

@@ -1,5 +1,7 @@
 package com.genned.app.data.analysis
 
+import com.genned.app.data.detection.classifier.ModelConfig
+import com.genned.domain.evidence.EvidenceWeights
 import com.genned.domain.model.DetectionSignal
 import com.genned.domain.model.SignalAvailability
 import com.genned.domain.model.SignalType
@@ -17,24 +19,65 @@ class VideoSignalAggregatorTest {
         description = "test",
     )
 
+    /** What the aggregator should produce: frames averaged in logit space, then video-calibrated. */
+    private fun expectedVideoScore(vararg frameScores: Float): Float = ModelConfig.videoCalibratedProbability(
+        frameScores.map(ModelConfig::logitDifferenceFromCalibratedProbability).average(),
+    )
+
     @Test
-    fun `averages scores and confidences across available frames`() {
+    fun `averages frames in logit space, applies the video calibration and averages confidences`() {
         val result = VideoSignalAggregator.aggregateFrameSignals(
             listOf(frameSignal(0.2f, 0.5f), frameSignal(0.4f, 0.7f), frameSignal(0.6f, 0.9f)),
         )
 
         assertThat(result.availability).isEqualTo(SignalAvailability.AVAILABLE)
-        assertThat(result.score).isWithin(0.001f).of(0.4f)
+        assertThat(result.score).isWithin(0.001f).of(expectedVideoScore(0.2f, 0.4f, 0.6f))
         assertThat(result.confidence).isWithin(0.001f).of(0.7f)
-        assertThat(result.description).contains("3 sampled video frames")
+        assertThat(result.description).contains("3 sampled frames")
     }
 
     @Test
     fun `uses singular wording for a single frame`() {
         val result = VideoSignalAggregator.aggregateFrameSignals(listOf(frameSignal(0.9f)))
 
-        assertThat(result.description).contains("1 sampled video frame")
-        assertThat(result.description).doesNotContain("1 sampled video frames")
+        assertThat(result.description).contains("1 sampled frame")
+        assertThat(result.description).doesNotContain("1 sampled frames")
+    }
+
+    @Test
+    fun `a typical real talking-head clip no longer reads HIGH`() {
+        // In the DF26 benchmark, real talking-head videos averaged ~0.83 per frame with the
+        // image calibration, and 26% of them showed HIGH. The video calibration must not
+        // let that happen.
+        val result = VideoSignalAggregator.aggregateFrameSignals(List(5) { frameSignal(0.83f) })
+
+        assertThat(result.score!!).isLessThan(EvidenceWeights.HIGH_THRESHOLD)
+        assertThat(result.score!!).isLessThan(0.6f)
+    }
+
+    @Test
+    fun `a strongly AI-looking clip is still only UNCERTAIN`() {
+        // Frames that would read 95% as photos: for video that evidence is much weaker
+        // (video AUC 0.65-0.79), so the clip stays out of HIGH.
+        val result = VideoSignalAggregator.aggregateFrameSignals(List(5) { frameSignal(0.95f) })
+
+        assertThat(result.score!!).isLessThan(EvidenceWeights.HIGH_THRESHOLD)
+        assertThat(result.score!!).isGreaterThan(0.6f)
+    }
+
+    @Test
+    fun `only near-certain frames can take a video to HIGH`() {
+        val result = VideoSignalAggregator.aggregateFrameSignals(List(5) { frameSignal(0.995f) })
+
+        assertThat(result.score!!).isAtLeast(EvidenceWeights.HIGH_THRESHOLD)
+    }
+
+    @Test
+    fun `video score increases with frame scores`() {
+        val scores = listOf(0.1f, 0.3f, 0.5f, 0.7f, 0.9f, 0.99f).map { frame ->
+            VideoSignalAggregator.aggregateFrameSignals(List(5) { frameSignal(frame) }).score!!
+        }
+        assertThat(scores).isInStrictOrder()
     }
 
     @Test
@@ -82,7 +125,7 @@ class VideoSignalAggregatorTest {
         )
 
         assertThat(result.availability).isEqualTo(SignalAvailability.AVAILABLE)
-        assertThat(result.score).isWithin(0.001f).of(0.8f)
-        assertThat(result.description).contains("1 sampled video frame")
+        assertThat(result.score).isWithin(0.001f).of(expectedVideoScore(0.8f))
+        assertThat(result.description).contains("1 sampled frame")
     }
 }

@@ -73,6 +73,7 @@ jobs:
               --dataset "$dir" --dataset-name "$name" \
               --json-dir eval-results --scores-csv eval-results/video-scores.csv \
               --candidates "${{ inputs.candidates }}" \
+              --video-calibration app \
               || echo "::warning::video evaluation failed for $name"
             echo "::endgroup::"
           done

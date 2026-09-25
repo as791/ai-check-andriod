@@ -92,8 +92,8 @@ HIGH_THRESHOLD = 0.90
 # app's two-view ("avg") preprocessing. Pass --calibration app to evaluate the app as shipped.
 APP_CALIBRATION = (0.2252, 0.0494)
 # Video path (VideoSignalAggregator): mean per-frame logit gap -> this calibration.
-# Keep in sync with ModelConfig.VIDEO_CALIBRATION_*; None until fitted from Video eval.
-APP_VIDEO_CALIBRATION = None
+# Keep in sync with ModelConfig.VIDEO_CALIBRATION_* (fit on Video eval run 36190406439).
+APP_VIDEO_CALIBRATION = (0.2071, -1.3977)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 CONDITIONS = ("original", "jpeg75", "social")

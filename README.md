@@ -141,10 +141,11 @@ only ever bundled at build time.
   from the repo's Actions tab ("Model eval").
 - **Video is less reliable than photos.** Reels and Shorts are analyzed by
   running the image classifier on 5 sampled frames. There is no motion or audio
-  analysis. On two recent real-vs-AI video benchmarks it caught nearly every AI
-  clip, but it also scored many *real* videos as AI-like. That was especially
-  true for talking-head clips, where 28% of real videos came out HIGH. A separate
-  video calibration to fix this false-alarm problem is in progress (#14).
+  analysis. On two recent real-vs-AI video benchmarks the image model scored
+  many *real* videos as AI-like (26% of real talking-head clips came out HIGH).
+  Video now has its own calibration. Real videos no longer show HIGH, but the
+  honest trade-off is that a video will almost always read UNCERTAIN until a
+  stronger video model lands (#14).
 - Like every AI-image detector, the classifier's training data has a cutoff
   and will be weaker against newer generators; compression, screenshotting,
   and intentional adversarial editing can all shift results in either

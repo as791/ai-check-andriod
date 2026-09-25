@@ -48,6 +48,24 @@ object ModelConfig {
     const val CALIBRATION_INTERCEPT = 0.0494f
 
     /**
+     * Separate calibration for video: P(ai) = sigmoid(SLOPE * meanGap + INTERCEPT), where
+     * meanGap is the mean per-frame logit gap across the sampled frames.
+     *
+     * The image model reads real video frames as AI-like (compression, motion blur,
+     * talking-head framing). With the image calibration, 26% of real talking-head clips
+     * showed HIGH. Fit by tools/calibrate.py on Video eval run 36190406439 (100 real + 100
+     * AI videos each from DF26 and DeepAction, the app's exact 5-frame pipeline).
+     * Calibration error 0.36/0.49 raw -> 0.14/0.20 when fit on the other dataset.
+     *
+     * Consequence, by design: with this model (video AUC 0.65-0.79), a video only reaches
+     * the HIGH band if its frames are near-certain as photos (mean image score about 0.98+).
+     * No benchmark video, real or AI, got there. Real clips land UNCERTAIN, and only
+     * clearly real-looking ones reach LOW. That's the honest ceiling for this model on video.
+     */
+    const val VIDEO_CALIBRATION_SLOPE = 0.2071f
+    const val VIDEO_CALIBRATION_INTERCEPT = -1.3977f
+
+    /**
      * Interprets the raw ONNX output as a single AI-probability float in [0,1].
      *
      * The export (tools/convert_model.py) emits the classifier head's raw *logits* —
@@ -82,6 +100,20 @@ object ModelConfig {
     /** Calibrated P(ai) for a logit gap, e.g. the mean of the gaps from each input view. */
     fun calibratedProbability(logitDifference: Double): Float =
         sigmoid(CALIBRATION_SLOPE * logitDifference + CALIBRATION_INTERCEPT)
+
+    /**
+     * Inverse of [calibratedProbability]: recovers a frame's logit gap from its (image-
+     * calibrated) score, so video frames can be averaged in logit space. Clamped away from
+     * 0/1 so a saturated score maps to a large but finite gap.
+     */
+    fun logitDifferenceFromCalibratedProbability(probability: Float): Double {
+        val p = probability.toDouble().coerceIn(1e-6, 1.0 - 1e-6)
+        return (kotlin.math.ln(p / (1.0 - p)) - CALIBRATION_INTERCEPT) / CALIBRATION_SLOPE
+    }
+
+    /** Video P(ai) from the mean per-frame logit gap - see [VIDEO_CALIBRATION_SLOPE]. */
+    fun videoCalibratedProbability(meanLogitDifference: Double): Float =
+        sigmoid(VIDEO_CALIBRATION_SLOPE * meanLogitDifference + VIDEO_CALIBRATION_INTERCEPT)
 
     /** Computed in Double so extreme logits saturate cleanly to 0/1 instead of overflowing. */
     private fun sigmoid(x: Double): Float =

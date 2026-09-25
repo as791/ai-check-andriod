@@ -56,6 +56,20 @@ class ModelConfigTest {
     }
 
     @Test
+    fun `inverting the image calibration recovers the logit gap`() {
+        for (gap in listOf(-12.0, -3.0, 0.0, 2.5, 9.0)) {
+            val roundTrip = ModelConfig.logitDifferenceFromCalibratedProbability(ModelConfig.calibratedProbability(gap))
+            assertThat(roundTrip).isWithin(1e-3).of(gap)
+        }
+    }
+
+    @Test
+    fun `inverting a saturated score stays finite`() {
+        assertThat(ModelConfig.logitDifferenceFromCalibratedProbability(1f).isFinite()).isTrue()
+        assertThat(ModelConfig.logitDifferenceFromCalibratedProbability(0f).isFinite()).isTrue()
+    }
+
+    @Test
     fun `equal logits mean genuinely uncertain`() {
         assertThat(ModelConfig.interpretOutput(logits(ai = 1.7f, human = 1.7f))).isWithin(0.02f).of(0.5f)
     }

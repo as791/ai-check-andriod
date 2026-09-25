@@ -250,9 +250,36 @@ dataset.
 
 **The image model reads real video frames as AI-like.** Compression, motion blur
 and talking-head framing all push real videos up. The image calibration doesn't
-carry over to video, so about 1 in 4 real talking-head clips showed HIGH. The
-fix is a separate video calibration fit on video data (issue #14); the
-benchmark is being re-run with 100 + 100 videos per dataset to fit it.
+carry over to video, so about 1 in 4 real talking-head clips showed HIGH.
+
+### Video: all models + video calibration ([run 36190406439](https://github.com/as791/genned/actions/runs/36190406439))
+
+100 real + 100 AI videos per dataset, the same 5 sampled frames for every model.
+Candidates use raw scores.
+
+| Model | AUC DeepAction | AUC DF26 | Real videos shown HIGH (DA / DF26) | AI caught at ≤5% false alarms (worst dataset) |
+|---|---|---|---|---|
+| Bundled (image-calibrated, before this fix) | 0.789 | 0.651 | 2% / 26% | 21% |
+| Community Forensics ViT-S 224 (MIT) | **0.970** | **0.743** | 0% / 0% | 33% |
+| Community Forensics ViT-S 384 (MIT) | 0.944 | 0.730 | 0% / 2% | 19% |
+| Ateeqq SigLIP | 0.645 | 0.691 | 43% / 99% | 18% |
+| dima806 ViT | 0.496 | 0.543 | 33% / 27% | 5% |
+
+The best video ensemble is commfor-224 + commfor-384 (mean): 38% of AI caught at
+≤5% false alarms, and 39% with SigLIP added.
+
+**Shipped video calibration.** `VideoSignalAggregator` now averages the frames'
+logit gaps (inverting the image calibration) and applies
+`P(ai) = sigmoid(0.2071 · meanGap − 1.3977)`. This was fit on the bundled
+model's per-video mean frame gap. The calibration error (ECE) goes from
+0.36 / 0.49 raw to 0.14 / 0.20 when fit on the other dataset only, and to
+0.09 pooled. At the global bands (HIGH ≥ 90%, LOW < 25%), the worst case is
+**0% of real videos shown HIGH** and 3% of AI videos shown LOW. The honest
+consequence is that with this model a video almost never reads HIGH. That
+takes near-certain frames (mean image score about 0.98+), and no benchmark
+video, real or AI, got there. Example: a real talking-head clip whose frames
+average 0.83 now reads about 50% (UNCERTAIN) instead of HIGH. Actually catching
+AI video needs a better video model; see the comparison above.
 
 Caveats: MS-COCO (Defactify's real photos) is a very common training source, so
 Defactify numbers may be optimistic. What the second dataset's "real" class

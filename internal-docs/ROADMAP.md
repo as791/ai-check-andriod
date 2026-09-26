@@ -27,7 +27,7 @@ Tracked in [#14](https://github.com/as791/genned/issues/14).
 - Benchmark the bundled model (`Model eval`). Done: baseline in
   `internal-docs/MODEL.md`.
 - Calibrate scores and set HIGH/LOW bands from data. Done: two-view averaging,
-  Platt calibration, HIGH ≥ 90% / LOW < 25%.
+  Platt calibration, HIGH ≥ 90% / LOW < 25% (LOW < 15% since the ensemble).
 - Compare candidate detectors (`Model compare`) and switch only for a clear win.
 - **Multi-model ensemble feasibility, ONNX only** (pulled forward from V2).
   Using only the benchmarked models: export each to ONNX, verify parity with
@@ -36,6 +36,9 @@ Tracked in [#14](https://github.com/as791/genned/issues/14).
   one dataset and scored on the other (`tools/ensemble.py`). Ship an ensemble
   only if it clears the on-device budget and beats the best affordable single
   model by ≥3 points of AI caught at 5% false alarms.
+  **Done:** bundled model + Community Forensics 224, fp16 weights, 78.7 MB total.
+  Worst case over photos and video: 30% of AI caught at 5% false alarms, vs 21% for
+  the single model (Ensemble build run 36196623887). LOW band moved to < 15%.
 - Benchmark the Reels path on real vs AI video (`Video eval`, which needs the
   `HF_TOKEN` secret for its gated datasets).
 

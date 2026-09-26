@@ -4,16 +4,18 @@ import android.content.Context
 import java.io.IOException
 
 /**
- * The classifier model is bundled at build time as an app asset, never downloaded at
+ * The classifier models are bundled at build time as app assets, never downloaded at
  * runtime (see internal-docs/MODEL.md "Never download a model at runtime"). The app ships
- * with `app/src/main/assets/models/ai-image-detector.onnx`; [openModelBytes] returns null
- * only if that asset is missing from a build, which callers treat as "classifier unavailable".
+ * with `models/ai-image-detector.onnx` (primary) and `models/commfor-224.onnx` (ensemble
+ * partner); [openModelBytes] returns null only if an asset is missing from a build, which
+ * callers treat as "classifier unavailable" (primary) or "run the primary alone" (partner).
  */
 object ModelAssets {
     const val ASSET_PATH = "models/ai-image-detector.onnx"
+    const val COMMUNITY_FORENSICS_ASSET_PATH = "models/commfor-224.onnx"
 
-    fun openModelBytes(context: Context): ByteArray? = try {
-        context.assets.open(ASSET_PATH).use { it.readBytes() }
+    fun openModelBytes(context: Context, assetPath: String = ASSET_PATH): ByteArray? = try {
+        context.assets.open(assetPath).use { it.readBytes() }
     } catch (e: IOException) {
         null
     }
@@ -29,8 +31,8 @@ object ModelAssets {
      * present and openModelBytes() (used for real inference) loads it fine -
      * confirmed by actually bundling a real model and hitting exactly this.
      */
-    fun isBundled(context: Context): Boolean = try {
-        context.assets.open(ASSET_PATH).close()
+    fun isBundled(context: Context, assetPath: String = ASSET_PATH): Boolean = try {
+        context.assets.open(assetPath).close()
         true
     } catch (e: IOException) {
         false

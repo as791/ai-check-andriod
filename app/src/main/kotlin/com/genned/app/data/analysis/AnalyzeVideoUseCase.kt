@@ -33,6 +33,8 @@ class AnalyzeVideoUseCase(
     private val watermarkProvider: DetectionProvider,
     private val evidenceEngine: EvidenceEngine,
     private val historyRepository: HistoryRepository,
+    /** Video calibration of the classifier that scores the frames (see VideoSignalAggregator). */
+    private val videoProbability: (Double) -> Float,
 ) {
     suspend fun run(
         videoUri: Uri,
@@ -49,7 +51,7 @@ class AnalyzeVideoUseCase(
             val perFrameSignals = coroutineScope {
                 frames.map { frame -> async { analyzeFrame(frame) } }.awaitAll()
             }
-            val classifierSignal = VideoSignalAggregator.aggregateFrameSignals(perFrameSignals)
+            val classifierSignal = VideoSignalAggregator.aggregateFrameSignals(perFrameSignals, videoProbability)
             val watermarkSignal = runCatching { watermarkProvider.analyze(frameInput(middleFrame)) }
                 .getOrElse { DetectionSignal.error(watermarkProvider.signalType, "This detector failed unexpectedly.") }
 

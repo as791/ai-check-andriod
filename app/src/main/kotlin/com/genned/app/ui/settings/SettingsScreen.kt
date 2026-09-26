@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.genned.app.BuildConfig
 import com.genned.app.R
+import com.genned.app.data.detection.classifier.EnsembleConfig
 import com.genned.app.data.detection.classifier.ModelAssets
 import com.genned.app.data.detection.classifier.ModelConfig
 import com.genned.app.debug.LogcatCapture
@@ -58,6 +59,9 @@ import kotlinx.coroutines.withContext
 fun SettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val modelBundled = remember { ModelAssets.isBundled(context) }
+    val ensembleBundled = remember {
+        modelBundled && ModelAssets.isBundled(context, ModelAssets.COMMUNITY_FORENSICS_ASSET_PATH)
+    }
 
     Scaffold(
         topBar = {
@@ -85,7 +89,10 @@ fun SettingsScreen(onBack: () -> Unit) {
             SectionHeading(stringResource(R.string.settings_model_heading))
             Text(
                 text = if (modelBundled) {
-                    stringResource(R.string.settings_model_body_present, ModelConfig.DISPLAY_NAME)
+                    stringResource(
+                        R.string.settings_model_body_present,
+                        if (ensembleBundled) EnsembleConfig.DISPLAY_NAME else ModelConfig.DISPLAY_NAME,
+                    )
                 } else {
                     stringResource(R.string.settings_model_body_absent)
                 },

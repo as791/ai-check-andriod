@@ -85,7 +85,7 @@ STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 INPUT_NAME = "pixel_values"
 
 # Keep these in sync with EvidenceWeights.kt (domain module).
-LOW_THRESHOLD = 0.25
+LOW_THRESHOLD = 0.15
 HIGH_THRESHOLD = 0.90
 
 # Keep these in sync with ModelConfig.CALIBRATION_SLOPE / CALIBRATION_INTERCEPT and the
@@ -94,6 +94,18 @@ APP_CALIBRATION = (0.2252, 0.0494)
 # Video path (VideoSignalAggregator): mean per-frame logit gap -> this calibration.
 # Keep in sync with ModelConfig.VIDEO_CALIBRATION_* (fit on Video eval run 36190406439).
 APP_VIDEO_CALIBRATION = (0.2071, -1.3977)
+# The shipped ensemble (EnsembleConfig.kt), fit by tools/ensemble_calibrate.py in Ensemble
+# build run 36196623887. Keep in sync with EnsembleConfig.
+APP_ENSEMBLE = {
+    "mean_d": -0.38708, "std_d": 8.00114, "mean_c": -3.96926, "std_c": 4.37424,
+    "photo": (3.19350, 0.16339), "video": (3.49213, -1.85881),
+}
+
+
+def ensemble_score(primary_gap: float, commfor_logit: float) -> float:
+    """EnsembleConfig.combine: mean of both models' standardized logits."""
+    e = APP_ENSEMBLE
+    return ((primary_gap - e["mean_d"]) / e["std_d"] + (commfor_logit - e["mean_c"]) / e["std_c"]) / 2.0
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 CONDITIONS = ("original", "jpeg75", "social")

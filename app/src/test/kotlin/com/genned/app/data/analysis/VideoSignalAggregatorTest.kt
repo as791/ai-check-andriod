@@ -11,12 +11,13 @@ import org.junit.Test
 /** Pure logic, no Android dependency — runs as a plain JUnit test. */
 class VideoSignalAggregatorTest {
 
-    private fun frameSignal(score: Float, confidence: Float = 1f) = DetectionSignal(
+    private fun frameSignal(score: Float, confidence: Float = 1f, rawScore: Double? = null) = DetectionSignal(
         type = SignalType.AI_CLASSIFIER,
         availability = SignalAvailability.AVAILABLE,
         score = score,
         confidence = confidence,
         description = "test",
+        rawScore = rawScore,
     )
 
     /** What the aggregator should produce: frames averaged in logit space, then video-calibrated. */
@@ -127,5 +128,29 @@ class VideoSignalAggregatorTest {
         assertThat(result.availability).isEqualTo(SignalAvailability.AVAILABLE)
         assertThat(result.score).isWithin(0.001f).of(expectedVideoScore(0.8f))
         assertThat(result.description).contains("1 sampled frame")
+    }
+
+    @Test
+    fun `frames carrying a raw score are averaged raw and passed to the given video calibration`() {
+        var received: Double? = null
+        val result = VideoSignalAggregator.aggregateFrameSignals(
+            listOf(frameSignal(0.9f, rawScore = 1.0), frameSignal(0.1f, rawScore = -0.4)),
+            videoProbability = { mean -> received = mean; 0.42f },
+        )
+
+        // The raw ensemble scores are used, not the photo probabilities shown per frame.
+        assertThat(received).isWithin(1e-9).of(0.3)
+        assertThat(result.score).isEqualTo(0.42f)
+    }
+
+    @Test
+    fun `frames without a raw score fall back to inverting the photo calibration`() {
+        var received: Double? = null
+        VideoSignalAggregator.aggregateFrameSignals(
+            listOf(frameSignal(0.7f)),
+            videoProbability = { mean -> received = mean; 0.5f },
+        )
+
+        assertThat(received).isWithin(1e-4).of(ModelConfig.logitDifferenceFromCalibratedProbability(0.7f))
     }
 }

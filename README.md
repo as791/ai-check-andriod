@@ -119,16 +119,20 @@ only ever bundled at build time.
 - Kotlin, Jetpack Compose, AndroidX libraries (Room, Navigation, ExifInterface,
   Activity/Lifecycle): Apache-2.0.
 - ONNX Runtime Mobile (`com.microsoft.onnxruntime:onnxruntime-android`): MIT.
-- Bundled classifier model (`Dafilab/ai-image-detector`): Apache-2.0.
+- Bundled classifier models: `Dafilab/ai-image-detector` (Apache-2.0) and
+  Community Forensics ViT-S 224 (`OwensLab/commfor-model-224`, MIT; Park & Owens, CVPR 2025).
 - `contentauth/c2pa-android` (referenced, not bundled): dual MIT/Apache-2.0.
 
 ## Known accuracy limitations
 
-- **The visual classifier ships with the app** — the ~70 MB
-  `Dafilab/ai-image-detector` ONNX export is bundled at
-  `app/src/main/assets/models/ai-image-detector.onnx` and runs on-device. If
-  that file is ever missing from a build, the classifier signal is reported as
-  unavailable (and the Settings screen says so) rather than faked.
+- **The visual classifier ships with the app.** It is an ensemble of two
+  on-device models, `Dafilab/ai-image-detector` and Community Forensics ViT-S
+  224, about 79 MB together, in `app/src/main/assets/models/`. Combined, they
+  beat either model alone. On the harder photo benchmark they catch 34% of AI
+  images at a 5% false-alarm rate (the single model caught 30%); on the easier
+  one, 95% (it caught 73%). If a model file is ever missing from a build, the
+  app falls back to the remaining model, or reports the classifier as
+  unavailable, rather than faking a score.
 - **Measured accuracy is moderate.** On two public real-vs-AI image datasets
   (500 images each), the bundled classifier reaches an AUC of 0.91 and 0.80
   (1.0 = perfect, 0.5 = coin flip). On the harder set, about a third of real
@@ -143,17 +147,23 @@ only ever bundled at build time.
   running the image classifier on 5 sampled frames. There is no motion or audio
   analysis. On two recent real-vs-AI video benchmarks the image model scored
   many *real* videos as AI-like (26% of real talking-head clips came out HIGH).
-  Video now has its own calibration. Real videos no longer show HIGH, but the
-  honest trade-off is that a video will almost always read UNCERTAIN until a
-  stronger video model lands (#14).
+  Video now has its own calibration, and the ensemble's second model is much
+  stronger on video. On two benchmarks it catches 82% and 30% of AI videos at
+  a 5% false-alarm rate (the single model caught 41% and 21%), and at most 2%
+  of real videos show HIGH. Modern talking-head fakes remain hard.
+- **Not robust to deliberate attacks.** An attacker with the model files can
+  add invisible noise that flips the result (#15 benchmarks this). The app's
+  job is to help you judge ordinary content, not to resist a determined
+  adversary.
 - Like every AI-image detector, the classifier's training data has a cutoff
   and will be weaker against newer generators; compression, screenshotting,
   and intentional adversarial editing can all shift results in either
   direction.
 - **Scores are calibrated, and bands are set to avoid false alarms.** The raw
   classifier's scores are rescaled to match how often it's actually right, and
-  "HIGH" needs 90% or more. In the benchmark that kept real images labeled HIGH
-  under 3%. The trade-off is that many images honestly come out UNCERTAIN.
+  "HIGH" needs 90% or more, and "LOW" needs under 15%. In the benchmark,
+  under 3% of real images were labeled HIGH, and at most 10% of AI images were
+  labeled LOW. The trade-off is that many images honestly come out UNCERTAIN.
 
 ## Contributing
 

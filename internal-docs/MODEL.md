@@ -2,8 +2,13 @@
 
 ## Status in this repository
 
-**The classifier model is bundled.** `app/src/main/assets/models/ai-image-detector.onnx`
-(about 70 MB) is committed to the repository: the `Dafilab/ai-image-detector` model
+**The app ships an ensemble of two bundled models** (see "Ensemble (shipped)"):
+`ai-image-detector.onnx` (35.2 MB) and `commfor-224.onnx` (Community Forensics ViT-S 224,
+MIT, 43.5 MB), both with fp16-stored weights and fp32 math. If the second file is missing
+or fails to load, the first runs alone with its own calibration.
+
+**The primary classifier model is bundled.** `app/src/main/assets/models/ai-image-detector.onnx`
+is committed to the repository: the `Dafilab/ai-image-detector` model
 below, exported to ONNX (export steps in "Replacing the model file"). It loads and runs on real
 devices — debug logs show output like
 `Classifier raw output=[[-3.787038, 2.1529553]] -> P(ai)=0.0026`, i.e. the graph
@@ -102,10 +107,12 @@ model:
 
 ### Model size
 
-The bundled full-precision export is about 70 MB (70,075,998 bytes). int8
-quantization (via `onnxruntime.quantization` or `torch.quantization`) can shrink
-this further for a smaller APK, at some accuracy cost that should be re-verified
-with `tools/evaluate.py` if you do this.
+The full-precision export is 70.1 MB. The app ships it with fp16-stored weights
+(`tools/fp16_weights.py`: weights stored as fp16 and cast back to fp32 at load, so
+all math stays fp32), which is 35.2 MB. The logit gap moves by at most 0.022
+(mean 0.007) on real dataset images, which is negligible after calibration
+(slope 0.23). Dynamic int8 quantization broke this model (logit gaps off by up to
+35), so it is not used.
 
 ### Known limitations
 
@@ -196,7 +203,8 @@ Findings:
   or below 1% drop from 58–71% of images to about 1%. ECE drops from 0.125/0.247 to
   0.102/0.081 (pooled fit). A fit on one dataset alone transfers only partly to the
   other (ECE 0.161/0.205), so treat the percentages as approximate.
-- **Bands** (`EvidenceWeights`): **HIGH ≥ 90%, LOW < 25%**, UNCERTAIN in between.
+- **Bands** (`EvidenceWeights`): **HIGH ≥ 90%, LOW < 25%**, UNCERTAIN in between
+  (LOW later moved to < 15% for the ensemble, see "Ensemble (shipped)").
   Worst case over every dataset × condition: **2.8% of real images shown HIGH**
   (was up to 38.8% with the old 70% band) and **8.0% of AI images shown LOW**.
   Accepted cost: many images now read UNCERTAIN. That's the honest answer for a
@@ -280,6 +288,80 @@ takes near-certain frames (mean image score about 0.98+), and no benchmark
 video, real or AI, got there. Example: a real talking-head clip whose frames
 average 0.83 now reads about 50% (UNCERTAIN) instead of HIGH. Actually catching
 AI video needs a better video model; see the comparison above.
+
+### Ensemble (shipped, [Ensemble build run 36196623887](https://github.com/as791/genned/actions/runs/36196623887))
+
+The app now combines the bundled model with **Community Forensics ViT-S 224**
+([OwensLab/commfor-model-224](https://huggingface.co/OwensLab/commfor-model-224), MIT,
+CVPR 2025). The two models make different mistakes: the bundled model catches more
+AI photos, while Community Forensics is much stronger on video and rarely flags real
+content. Every number below comes from the exact ONNX files the app bundles.
+
+`EnsembleConfig`:
+`s = ((gap − μd)/σd + (cf − μc)/σc) / 2` is the mean of both models' standardized
+logits, with standardization fit on photo scores. Photos use
+`P = sigmoid(3.1935·s + 0.1634)`. Video uses `P = sigmoid(3.4921·mean(s) − 1.8588)`
+over the 5 sampled frames. Python mirror: `tools/evaluate.py` `APP_ENSEMBLE`.
+
+| | Bundled alone | Community Forensics alone | **Ensemble** |
+|---|---|---|---|
+| Photos AUC (Defactify / MJ-DALL·E-SD-NBP) | 0.952 / 0.773 | 0.959 / 0.654 | **0.991 / 0.778** |
+| Photos: AI caught at 5% false alarms | 73.2% / 29.7% | 83.3% / 22.8% | **94.8% / 33.9%** |
+| Video AUC (DeepAction / DF26) | 0.793 / 0.651 | 0.970 / 0.743 | 0.958 / **0.746** |
+| Video: AI caught at 5% false alarms | 41% / 21% | 70% / 33% | **82%** / 30% |
+| **Worst case over photos and video** | 21% | 22.8% | **30%** |
+
+- **Bands.** HIGH stays at ≥ 90%. In the worst case, 2.8% of real photos and 2.0%
+  of real videos show HIGH (target ≤ 5%). LOW moved from < 25% to **< 15%**: at
+  25%, 17.6% of AI photos and 17% of AI videos read LOW. At 15% that is 10.0% and
+  9.0% (target ≤ 10%). That value is the calibration's own recommendation for
+  both photos and video.
+- **Parity** (40 images).
+  - Community Forensics, authors' PyTorch pipeline vs the app's preprocessing plus
+    ONNX: max logit difference 0.0001. That needed torchvision's exact geometry:
+    Resize truncates the long side, CenterCrop rounds half-to-even.
+  - fp16 vs fp32 weights: 0.022 for the bundled model, 0.014 for Community
+    Forensics.
+  - Both files load in the app's ONNX Runtime 1.19 (IR 8, opset 17).
+- **Cost.** 3 model runs per check: 2 views for the bundled model, 1 for Community
+  Forensics. The models grow from 70.1 MB to 78.7 MB in total (+8.6 MB).
+- **Still limited on talking-head video.** DF26 AUC is 0.746, and some generators
+  (LTX, Hunyuan) fool both models.
+
+### Adversarial robustness (Phase 2, [run 36196534662](https://github.com/as791/genned/actions/runs/36196534662), #15)
+
+`tools/adv_eval.py` attacks a differentiable copy of the app pipeline (onnx2torch,
+with the app's JPEG q92 inside the attack via a straight-through estimator):
+- white-box: FGSM, PGD with EOT, and a PGD adapted to each defense;
+- transfer from a surrogate model;
+- black-box Square Attack (200 queries).
+
+*Evasion* means an AI image shown LOW. *Framing* means a real image shown HIGH.
+*Laundered* means the result is re-scored after JPEG q75. Worst case is taken over
+all attacks at 8/255.
+
+| Defense | Model runs per check | Clean AUC | Worst evasion (direct / laundered) | Worst framing | Square (black box) | Eligible |
+|---|---|---|---|---|---|---|
+| none | 2 | 0.848 | 100% / 100% | 100% | 83% | – |
+| **consistency** (JPEG75 + median-3 disagreement → abstain) | 4 | 0.848 | 91.7% / 100% | **20.8%** | 92% | ✅ selected by the rule |
+| transform (4 random resize/JPEG views) | 4 | 0.899 | 100% / 100% | 100% | **33%** | ✅ |
+| ensemble | 3 | 0.913 | 100% / 100% | 100% | 58% | ✅ |
+| smoothing (8 noisy copies, σ = 0.03) | 8 | 0.648 | 100% / 83% | 100% | 0% | ❌ loses clean accuracy, over budget |
+
+Reading:
+- **No inference-time defense that is cheap enough for a phone stops an adaptive
+  white-box attacker.** This matches the literature. Only training-time defenses,
+  such as adversarial training, move this number, and those need GPU training.
+- The consistency check is the only defense that meaningfully protects real
+  people. Real images pushed to HIGH drop from 100% to 21%, because the attacked
+  image is caught and the app abstains.
+- Random transforms make black-box queries much harder.
+
+Caveats:
+- The sample is small: 24 AI and 24 real images (12 for Square).
+- The run used the single bundled model at the old LOW < 25% band, before the
+  ensemble shipped. Re-run it on the ensemble before integrating any defense.
+- Not yet benchmarked: TRIM and RAID (#15).
 
 Caveats: MS-COCO (Defactify's real photos) is a very common training source, so
 Defactify numbers may be optimistic. What the second dataset's "real" class

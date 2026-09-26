@@ -16,7 +16,17 @@ import com.genned.domain.model.SignalType
  * See [ModelConfig.VIDEO_CALIBRATION_SLOPE].
  */
 object VideoSignalAggregator {
-    fun aggregateFrameSignals(perFrameSignals: List<DetectionSignal>): DetectionSignal {
+    /**
+     * @param videoProbability Maps the mean per-frame raw evidence to a video-calibrated
+     *   probability. It comes from the classifier that produced the frames
+     *   (AIImageClassifierProvider.videoProbability), since single-model and ensemble use
+     *   different calibrations. Frames without a rawScore fall back to inverting the
+     *   single-model photo calibration.
+     */
+    fun aggregateFrameSignals(
+        perFrameSignals: List<DetectionSignal>,
+        videoProbability: (Double) -> Float = ModelConfig::videoCalibratedProbability,
+    ): DetectionSignal {
         val available = perFrameSignals.filter {
             it.availability == SignalAvailability.AVAILABLE && it.score != null
         }
@@ -38,8 +48,10 @@ object VideoSignalAggregator {
         }
 
         val scores = available.map { it.score!! }
-        val meanGap = scores.map(ModelConfig::logitDifferenceFromCalibratedProbability).average()
-        val videoScore = ModelConfig.videoCalibratedProbability(meanGap)
+        val meanRaw = available.map {
+            it.rawScore ?: ModelConfig.logitDifferenceFromCalibratedProbability(it.score!!)
+        }.average()
+        val videoScore = videoProbability(meanRaw)
         val meanConfidence = available.map { it.confidence }.average().toFloat()
 
         return DetectionSignal(

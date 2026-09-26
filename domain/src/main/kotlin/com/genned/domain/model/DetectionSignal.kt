@@ -14,6 +14,9 @@ package com.genned.domain.model
  *   metadata found" rather than "Human-made".
  * @param evidence Optional raw detail (e.g. the literal EXIF string matched) shown in
  *   an expandable "why" section.
+ * @param rawScore Optional detector-specific, uncalibrated evidence behind [score] (e.g. a
+ *   classifier logit). Only used to combine several readings of the same detector before
+ *   calibration, such as video frames; never shown, never persisted.
  */
 data class DetectionSignal(
     val type: SignalType,
@@ -22,6 +25,7 @@ data class DetectionSignal(
     val confidence: Float,
     val description: String,
     val evidence: String? = null,
+    val rawScore: Double? = null,
 ) {
     init {
         require(score == null || score in 0f..1f) { "score must be in [0,1], was $score" }

@@ -48,7 +48,6 @@ class AppContainer(context: Context) {
             visualProviders = listOf(classifierProvider, watermarkProvider),
             evidenceEngine = evidenceEngine,
             historyRepository = historyRepository,
-            videoProbability = classifierProvider::videoProbability,
         )
     }
 

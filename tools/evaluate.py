@@ -243,19 +243,24 @@ COMMFOR_SIZE = 224
 COMMFOR_RESIZE = 256
 
 
-def commfor_input(image: Image.Image) -> np.ndarray:
-    """Community Forensics 224 input as the app computes it, matching the authors' torchvision
-    test transform pixel for pixel: short side -> 256 with the long side *truncated*
-    (torchvision Resize), center-crop offsets rounded half-to-even (torchvision CenterCrop),
-    ImageNet normalization, NCHW. Off-by-one-pixel differences move this ViT's logit by up
-    to ~1, so the geometry must match exactly (checked by tools/build_models.py)."""
+def commfor_view(image: Image.Image) -> Image.Image:
+    """The 224x224 Community Forensics view as the app computes it, matching the authors'
+    torchvision test transform pixel for pixel: short side -> 256 with the long side
+    *truncated* (torchvision Resize), center-crop offsets rounded half-to-even (torchvision
+    CenterCrop). Off-by-one-pixel differences move this ViT's logit by up to ~1, so the
+    geometry must match exactly (checked by tools/build_models.py)."""
     short, long = sorted(image.size)
     new_long = int(COMMFOR_RESIZE * long / short)
     width, height = (COMMFOR_RESIZE, new_long) if image.width <= image.height else (new_long, COMMFOR_RESIZE)
     resized = image.resize((width, height), Image.BILINEAR)
     left = int(round((width - COMMFOR_SIZE) / 2.0))
     top = int(round((height - COMMFOR_SIZE) / 2.0))
-    return to_tensor(resized.crop((left, top, left + COMMFOR_SIZE, top + COMMFOR_SIZE)))
+    return resized.crop((left, top, left + COMMFOR_SIZE, top + COMMFOR_SIZE))
+
+
+def commfor_input(image: Image.Image) -> np.ndarray:
+    """commfor_view with ImageNet normalization, NCHW."""
+    return to_tensor(commfor_view(image))
 
 
 class CommforOnnx:

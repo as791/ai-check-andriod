@@ -3,10 +3,29 @@ name: Adversarial eval
 # Phase 2 (#15): benchmark phone-feasible defenses against white-box (FGSM, PGD with
 # EOT, adaptive), transfer and black-box (Square) attacks, then pick the defense to
 # integrate (tools/adv_report.py). One job per defense, in parallel. Manual only.
+# The consistency-threshold job fits the consistency check's abstain threshold on the
+# app's exact pipeline (tools/consistency_calibrate.py).
 # Images never leave the runners; only numbers are uploaded.
 on:
   workflow_dispatch:
     inputs:
+      model:
+        description: Detector the defenses wrap (ensemble = the app as shipped)
+        type: choice
+        options: [ensemble, bundled]
+        default: ensemble
+      defenses:
+        description: JSON list of defenses (none, transform, smoothing, consistency, ensemble)
+        default: '["none","consistency"]'
+      attack_per_class:
+        description: Attacked images per class
+        default: '60'
+      clean_per_class:
+        description: Clean images per class (AUC, calibration, abstain threshold)
+        default: '150'
+      square_images:
+        description: Images attacked with the (slow) black-box Square Attack
+        default: '30'
       smoke:
         description: Tiny end-to-end run (a few images, 2 steps) to check the pipeline
         type: boolean
@@ -19,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        defense: [none, transform, smoothing, consistency, ensemble]
+        defense: ${{ fromJSON(inputs.defenses) }}
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
     steps:
@@ -36,23 +55,60 @@ jobs:
             "huggingface_hub>=0.23,<1" "pillow>=10,<12" "numpy>=1.26,<3" "datasets>=2.19,<5"
 
       - name: Fetch image datasets
-        run: tools/fetch_all_eval_data.sh 100
+        run: tools/fetch_all_eval_data.sh 250
 
-      - name: Attack ${{ matrix.defense }}
+      - name: Attack ${{ matrix.defense }} (${{ inputs.model }})
         run: |
-          python tools/adv_eval.py --defense ${{ matrix.defense }} \
+          python tools/adv_eval.py --model ${{ inputs.model }} --defense ${{ matrix.defense }} \
             --datasets eval-data/defactify eval-data/mj-dalle-sd-nbp \
+            --attack-per-class ${{ inputs.attack_per_class }} --clean-per-class ${{ inputs.clean_per_class }} \
+            --square-images ${{ inputs.square_images }} \
             --out adv-results ${{ inputs.smoke && '--smoke' || '' }}
 
       - name: Upload results (numbers only)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: adv-${{ matrix.defense }}
+          name: adv-${{ inputs.model }}-${{ matrix.defense }}
+          path: adv-results/
+
+  consistency-threshold:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install "onnxruntime>=1.18,<2" "pillow>=10,<12" "numpy>=1.26,<3" "datasets>=2.19,<5" \
+            "huggingface_hub>=0.23,<1"
+
+      - name: Fetch image datasets
+        run: tools/fetch_all_eval_data.sh 250
+
+      - name: Fit the abstain threshold on the app pipeline
+        run: |
+          mkdir -p adv-results
+          python tools/consistency_calibrate.py --datasets eval-data/defactify eval-data/mj-dalle-sd-nbp \
+            --per-class ${{ inputs.smoke && '3' || inputs.clean_per_class }} \
+            --json adv-results/consistency-threshold.json | tee adv-results/consistency-threshold.md
+          cat adv-results/consistency-threshold.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results (numbers only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adv-consistency-threshold
           path: adv-results/
 
   report:
-    needs: attack
+    needs: [attack, consistency-threshold]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -71,6 +127,10 @@ jobs:
       - name: Report
         run: |
           python tools/adv_report.py adv-results > adv-results/report.md
+          if [ -f adv-results/consistency-threshold.md ]; then
+            echo >> adv-results/report.md
+            cat adv-results/consistency-threshold.md >> adv-results/report.md
+          fi
           cat adv-results/report.md >> "$GITHUB_STEP_SUMMARY"
           cat adv-results/report.md
 

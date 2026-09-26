@@ -21,13 +21,18 @@ PGD against the consistency check (it also minimizes the check's disagreement),
 transfer from a surrogate model (Community Forensics, so no gradients from the target),
 and Square Attack (score-based, query-only black box). Budgets: L-inf eps in /255.
 
+Every defense wraps the detector chosen with --model: `ensemble` (default; the app as
+shipped: bundled + Community Forensics 224 with the shipped EnsembleConfig constants) or
+`bundled` (the primary model alone, as before the ensemble).
+
 Defenses (all phone-feasible; cost = model runs per check):
-  none          the app as shipped (bundled model, two identical views here)
+  none          the app as shipped
   transform     random resize+pad+blur, averaged over K draws (Xie et al. 2018 style)
   smoothing     Gaussian noise (sigma), averaged over N draws (randomized smoothing, soft)
   consistency   feature-squeezing check: raw vs (JPEG q75 + 3x3 median); disagreement
                 above the clean 95th percentile -> abstain (shown UNCERTAIN)
-  ensemble      bundled + Community Forensics 224 (mean of standardized logits)
+  ensemble      bundled + CF 224 with standardization refit on the clean split
+                (only meaningful with --model bundled; the shipped ensemble is --model ensemble)
 
 Every randomized defense is attacked with EOT; JPEG is handled with BPDA; the
 consistency check gets an adaptive loss. Without these, robustness numbers are
@@ -37,8 +42,8 @@ Needs torch, torchvision, timm, onnx2torch, onnxruntime, pillow. Writes one JSON
 defense (tools/adv_report.py merges them). Nothing but numbers leaves the runner.
 
 Usage:
-    python tools/adv_eval.py --defense none --datasets eval-data/defactify eval-data/mj-dalle-sd-nbp \\
-        --out adv-results [--smoke]
+    python tools/adv_eval.py --model ensemble --defense consistency \\
+        --datasets eval-data/defactify eval-data/mj-dalle-sd-nbp --out adv-results [--smoke]
 """
 
 from __future__ import annotations
@@ -59,6 +64,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from calibrate import fit_platt  # noqa: E402
 from evaluate import (  # noqa: E402
     APP_CALIBRATION,
+    APP_ENSEMBLE,
     HIGH_THRESHOLD,
     INPUT_NAME,
     INPUT_SIZE,
@@ -119,7 +125,8 @@ def jpeg_ste(x: torch.Tensor, quality: int) -> torch.Tensor:
 
 
 def median3(x: torch.Tensor) -> torch.Tensor:
-    padded = F.pad(x, (1, 1, 1, 1), mode="reflect")
+    """3x3 per-channel median, edge pixels replicated (as the app and consistency_calibrate.py)."""
+    padded = F.pad(x, (1, 1, 1, 1), mode="replicate")
     patches = padded.unfold(2, 3, 1).unfold(3, 3, 1)  # B,C,H,W,3,3
     return patches.reshape(*patches.shape[:4], 9).median(dim=-1).values
 
@@ -129,6 +136,9 @@ def median3(x: torch.Tensor) -> torch.Tensor:
 class Bundled(torch.nn.Module):
     """The app's primary detector as a differentiable torch module (onnx2torch).
     forward(x in [0,1]) -> logit gap (ai - human), after the app's JPEG q92."""
+
+    runs = 2  # the app runs two views (identical here, since inputs are pre-squared)
+    models = 1
 
     def __init__(self, onnx_path: Path):
         super().__init__()
@@ -150,6 +160,9 @@ class Bundled(torch.nn.Module):
 class CommunityForensics(torch.nn.Module):
     """Community Forensics ViT-S 224 with the app's preprocessing (short side 256, crop 224)."""
 
+    runs = 1
+    models = 1
+
     def __init__(self):
         super().__init__()
         from eval_candidates import CommunityForensics as Candidate
@@ -169,12 +182,17 @@ class CommunityForensics(torch.nn.Module):
 
 
 class Ensemble(torch.nn.Module):
-    """Mean of standardized logits; standardization fit on the clean split (label-free)."""
+    """Mean of standardized logits. shipped=True uses the app's EnsembleConfig constants
+    (tools/evaluate.py APP_ENSEMBLE); otherwise fit() estimates them on the clean split."""
 
-    def __init__(self, bundled: Bundled, cf: CommunityForensics):
+    runs = 3
+    models = 2
+
+    def __init__(self, bundled: Bundled, cf: CommunityForensics, shipped: bool = False):
         super().__init__()
         self.bundled, self.cf = bundled, cf
-        self.stats = (0.0, 1.0, 0.0, 1.0)
+        e = APP_ENSEMBLE
+        self.stats = (e["mean_d"], e["std_d"], e["mean_c"], e["std_c"]) if shipped else (0.0, 1.0, 0.0, 1.0)
 
     def fit(self, clean: torch.Tensor) -> None:
         with torch.no_grad():
@@ -197,11 +215,13 @@ class Prediction:
 
 class Defense:
     name = "none"
-    cost = 2  # model runs per check in the app (two views)
     randomized = False
+    # The detector's own shipped calibration; set by main() from --model.
+    shipped_calibration = APP_CALIBRATION
 
     def __init__(self, detector: torch.nn.Module):
         self.detector = detector
+        self.cost = detector.runs  # model runs per check in the app
 
     def raw(self, x: torch.Tensor, gen: torch.Generator) -> torch.Tensor:
         """One differentiable draw of the defended score (what EOT averages)."""
@@ -213,7 +233,7 @@ class Defense:
 
     def calibrate(self, clean: torch.Tensor, labels: torch.Tensor, gen: torch.Generator) -> None:
         """Probability mapping for the defended score; the app's shipped calibration by default."""
-        self.slope, self.intercept = APP_CALIBRATION
+        self.slope, self.intercept = self.shipped_calibration
 
     def probability(self, score: torch.Tensor) -> torch.Tensor:
         return torch.sigmoid(self.slope * score + self.intercept)
@@ -225,7 +245,8 @@ class RandomTransform(Defense):
     def __init__(self, detector, draws: int = 4):
         super().__init__(detector)
         self.draws = draws
-        self.cost = draws
+        # Each draw replaces the app's views with one transformed view per model.
+        self.cost = draws * detector.models
 
     def _transform(self, x: torch.Tensor, gen: torch.Generator) -> torch.Tensor:
         scale = 0.8 + 0.2 * torch.rand(1, generator=gen).item()
@@ -270,7 +291,10 @@ class Smoothing(RandomTransform):
 
 class Consistency(Defense):
     name = "consistency"
-    cost = 4  # two views, raw + squeezed
+
+    def __init__(self, detector):
+        super().__init__(detector)
+        self.cost = 2 * detector.runs  # the detector on the image and on its squeezed copy
 
     def squeezed(self, x: torch.Tensor) -> torch.Tensor:
         return median3(jpeg_ste(x, 75))
@@ -291,7 +315,7 @@ class Consistency(Defense):
 
 
 class EnsembleDefense(Defense):
-    name, cost = "ensemble", 3
+    name = "ensemble"
 
     def calibrate(self, clean, labels, gen):
         self.detector.fit(clean)
@@ -384,9 +408,12 @@ def batched(fn, x: torch.Tensor, size: int = 4):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--model", default="ensemble", choices=["ensemble", "bundled"],
+                        help="Detector the defenses wrap: the shipped ensemble or the bundled model alone")
     parser.add_argument("--defense", required=True, choices=["none", "transform", "smoothing", "consistency", "ensemble"])
     parser.add_argument("--datasets", type=Path, nargs="+", required=True)
     parser.add_argument("--bundled", type=Path, default=Path("app/src/main/assets/models/ai-image-detector.onnx"))
+    parser.add_argument("--commfor-onnx", type=Path, default=Path("app/src/main/assets/models/commfor-224.onnx"))
     parser.add_argument("--clean-per-class", type=int, default=60)
     parser.add_argument("--attack-per-class", type=int, default=24)
     parser.add_argument("--eps", default="4,8", help="L-inf budgets in /255")
@@ -424,11 +451,30 @@ def main() -> None:
     # Community Forensics: the ensemble's partner, and the surrogate for transfer attacks
     # on single-model defenses (no gradients from the target).
     cf = CommunityForensics()
+    from evaluate import CommforOnnx
+
+    shipped_cf = CommforOnnx(args.commfor_onnx)
+    with torch.no_grad():
+        torch_cf = cf(probe_x, app_jpeg=False)
+    onnx_cf = [shipped_cf.gap(Image.fromarray((x.permute(1, 2, 0).numpy() * 255).round().astype(np.uint8)))
+               for x in probe_x]
+    cf_parity = float(np.max(np.abs(torch_cf.numpy() - np.array(onnx_cf))))
+    print(f"Community Forensics torch vs shipped ONNX parity (max |logit diff|): {cf_parity:.5f}")
+    if cf_parity > 0.1:
+        sys.exit(f"Community Forensics copy doesn't match the shipped model (max diff {cf_parity}); refusing to report.")
+
+    if args.model == "ensemble":
+        if args.defense == "ensemble":
+            sys.exit("--defense ensemble refits the ensemble; with --model ensemble use --defense none.")
+        detector = Ensemble(bundled, cf, shipped=True)
+        Defense.shipped_calibration = APP_ENSEMBLE["photo"]
+    else:
+        detector = bundled
     defense: Defense = {
-        "none": lambda: Defense(bundled),
-        "transform": lambda: RandomTransform(bundled),
-        "smoothing": lambda: Smoothing(bundled),
-        "consistency": lambda: Consistency(bundled),
+        "none": lambda: Defense(detector),
+        "transform": lambda: RandomTransform(detector),
+        "smoothing": lambda: Smoothing(detector),
+        "consistency": lambda: Consistency(detector),
         "ensemble": lambda: EnsembleDefense(Ensemble(bundled, cf)),
     }[args.defense]()
 
@@ -441,7 +487,8 @@ def main() -> None:
         zip(*[outcomes(defense, clean_x[i : i + 8], gen).values() for i in range(0, len(clean_x), 8)]))}
     y = clean_y.numpy()
     result = {
-        "defense": args.defense, "cost": defense.cost, "parity": parity,
+        "model": args.model, "defense": args.defense, "cost": defense.cost, "parity": parity,
+        "cf_parity": cf_parity,
         "clean": {
             "n": int(len(y)), "auc": roc_auc(y, clean_out["prob"]),
             "real_shown_high": float(clean_out["high"][y == 0].mean()),
@@ -456,9 +503,13 @@ def main() -> None:
     attack_set = load_split(args.datasets, args.attack_per_class, args.seed + 2)
     ai_x = torch.stack([t for t, lab, _ in attack_set if lab == 1])
     real_x = torch.stack([t for t, lab, _ in attack_set if lab == 0])
-    # Transfer: crafted with gradients from a model that isn't (all of) the target.
-    surrogate = Defense(cf) if args.defense != "ensemble" else Defense(bundled)
+    # Transfer: crafted with gradients from a model that isn't (all of) the target. Against
+    # an ensemble target the surrogate is the bundled model alone (the attacker knows one of
+    # the two models); against the bundled model alone it is Community Forensics.
+    ensemble_target = args.model == "ensemble" or args.defense == "ensemble"
+    surrogate = Defense(bundled) if ensemble_target else Defense(cf)
     surrogate.slope, surrogate.intercept = 1.0, 0.0  # both surrogates: higher logit = more AI
+    result["surrogate"] = "bundled" if ensemble_target else "community-forensics"
 
     def record(name: str, eps: float, adv: torch.Tensor, goal: str) -> None:
         for laundered in (False, True):
@@ -496,7 +547,7 @@ def main() -> None:
 
     result["seconds"] = round(time.time() - started)
     args.out.mkdir(parents=True, exist_ok=True)
-    (args.out / f"adv__{args.defense}.json").write_text(json.dumps(result, indent=2, default=float))
+    (args.out / f"adv__{args.model}__{args.defense}.json").write_text(json.dumps(result, indent=2, default=float))
 
 
 if __name__ == "__main__":

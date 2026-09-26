@@ -142,9 +142,14 @@ class Bundled(torch.nn.Module):
 
     def __init__(self, onnx_path: Path):
         super().__init__()
+        import onnx
         from onnx2torch import convert
 
-        self.net = convert(str(onnx_path)).eval()
+        from fp16_weights import restore_fp32
+
+        # The shipped file stores weights as fp16 + Cast; onnx2torch needs them as
+        # initializers. restore_fp32 is exact (the same upcast the runtime Cast does).
+        self.net = convert(restore_fp32(onnx.load(str(onnx_path)))).eval()
         for p in self.net.parameters():
             p.requires_grad_(False)
 
@@ -172,6 +177,10 @@ class CommunityForensics(torch.nn.Module):
         self.net = candidate.model.eval()
         for p in self.net.parameters():
             p.requires_grad_(False)
+            # Match the shipped commfor-224.onnx, which stores these weights as fp16
+            # (tools/fp16_weights.py, min 1024 elements).
+            if p.numel() >= 1024:
+                p.data = p.data.half().float()
 
     def forward(self, x: torch.Tensor, app_jpeg: bool = True) -> torch.Tensor:
         if app_jpeg:

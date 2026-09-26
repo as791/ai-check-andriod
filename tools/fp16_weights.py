@@ -52,6 +52,34 @@ def convert(src: Path, dst: Path, min_elements: int = 1024) -> tuple[int, int]:
     return converted, len(new_initializers)
 
 
+def restore_fp32(model: onnx.ModelProto) -> onnx.ModelProto:
+    """Inverse of convert(): fp16-stored weights back to plain fp32 initializers.
+
+    Each `X__fp16` initializer feeding a Cast to float becomes an fp32 initializer named
+    after the Cast's output, and the Cast is dropped. The upcast is exact and is what the
+    runtime Cast computes, so the graph's outputs are unchanged. Tools that need weights as
+    initializers (e.g. onnx2torch for gradient-based attacks) use this."""
+    model = onnx.ModelProto.FromString(model.SerializeToString())
+    graph = model.graph
+    initializers = {init.name: init for init in graph.initializer}
+    restored, kept_nodes = {}, []
+    for node in graph.node:
+        source = node.input[0] if node.op_type == "Cast" and node.input else None
+        if (source in initializers and source.endswith("__fp16")
+                and any(a.name == "to" and a.i == TensorProto.FLOAT for a in node.attribute)):
+            values = numpy_helper.to_array(initializers[source]).astype(np.float32)
+            restored[source] = numpy_helper.from_array(values, node.output[0])
+        else:
+            kept_nodes.append(node)
+    new_initializers = [restored.get(init.name, init) for init in graph.initializer]
+    del graph.initializer[:]
+    graph.initializer.extend(new_initializers)
+    del graph.node[:]
+    graph.node.extend(kept_nodes)
+    onnx.checker.check_model(model)
+    return model
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("src", type=Path)

@@ -102,9 +102,19 @@ APP_ENSEMBLE = {
 }
 
 
-def ensemble_score(primary_gap: float, commfor_logit: float) -> float:
+def load_ensemble_params(path: Path) -> dict:
+    """APP_ENSEMBLE-shaped constants from an ensemble-params.json written by
+    tools/ensemble_calibrate.py (e.g. for a candidate model set on a model-assets branch)."""
+    raw = json.loads(Path(path).read_text())
+    st = raw["standardization"]
+    return {"mean_d": st["mean_d"], "std_d": st["std_d"], "mean_c": st["mean_c"], "std_c": st["std_c"],
+            "photo": (raw["photo"]["slope"], raw["photo"]["intercept"]),
+            "video": (raw["video"]["slope"], raw["video"]["intercept"])}
+
+
+def ensemble_score(primary_gap: float, commfor_logit: float, params: dict | None = None) -> float:
     """EnsembleConfig.combine: mean of both models' standardized logits."""
-    e = APP_ENSEMBLE
+    e = params or APP_ENSEMBLE
     return ((primary_gap - e["mean_d"]) / e["std_d"] + (commfor_logit - e["mean_c"]) / e["std_c"]) / 2.0
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}

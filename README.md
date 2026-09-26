@@ -172,6 +172,9 @@ provenance, computer vision or Android. Good places to start:
 
 - [#14 Detector accuracy](https://github.com/as791/genned/issues/14): calibrate
   the scores, and benchmark and propose better on-device detectors.
+- [#15 Adversarial robustness](https://github.com/as791/genned/issues/15):
+  benchmarks and adversarial fine-tuning. If you have a GPU,
+  `notebooks/adversarial_finetune.ipynb` runs on free Colab or Kaggle.
 - [#1 Public release readiness](https://github.com/as791/genned/issues/1): the
   checklist for a store release.
 

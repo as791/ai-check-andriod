@@ -41,6 +41,7 @@ from evaluate import (  # noqa: E402
     commfor_view,
     degrade,
     ensemble_score,
+    load_ensemble_params,
     logit_difference,
     roc_auc,
     to_model_input,
@@ -70,7 +71,8 @@ def squeeze(view: Image.Image) -> Image.Image:
 
 
 class AppEnsemble:
-    def __init__(self, bundled: Path, commfor: Path):
+    def __init__(self, bundled: Path, commfor: Path, params: dict):
+        self.params = params
         self.primary = ort.InferenceSession(str(bundled), providers=["CPUExecutionProvider"])
         self.cf = CommforOnnx(commfor)
 
@@ -84,9 +86,10 @@ class AppEnsemble:
         """(ensemble score, ensemble score on the squeezed views) for an app-normalized image."""
         primary_views = [to_model_input(image, "squash"), to_model_input(image, "center_crop")]
         cf = commfor_view(image)
-        raw = ensemble_score(np.mean([self._primary_gap(v) for v in primary_views]), self._cf_logit(cf))
+        raw = ensemble_score(np.mean([self._primary_gap(v) for v in primary_views]), self._cf_logit(cf),
+                             self.params)
         sq = ensemble_score(np.mean([self._primary_gap(squeeze(v)) for v in primary_views]),
-                            self._cf_logit(squeeze(cf)))
+                            self._cf_logit(squeeze(cf)), self.params)
         return raw, sq
 
 
@@ -96,10 +99,13 @@ def main() -> None:
     parser.add_argument("--bundled", type=Path, default=Path("app/src/main/assets/models/ai-image-detector.onnx"))
     parser.add_argument("--commfor-onnx", type=Path, default=Path("app/src/main/assets/models/commfor-224.onnx"))
     parser.add_argument("--per-class", type=int, default=150, help="Images per class per dataset")
+    parser.add_argument("--ensemble-params", type=Path, default=None,
+                        help="ensemble-params.json for a candidate model set (default: the app's APP_ENSEMBLE)")
     parser.add_argument("--json", type=Path, default=None)
     args = parser.parse_args()
 
-    model = AppEnsemble(args.bundled, args.commfor_onnx)
+    params = load_ensemble_params(args.ensemble_params) if args.ensemble_params else APP_ENSEMBLE
+    model = AppEnsemble(args.bundled, args.commfor_onnx, params)
     rows = []  # (dataset, condition, is_ai, raw, squeezed)
     for d in args.datasets:
         for is_ai, sub in ((1, "ai"), (0, "real")):
@@ -115,7 +121,7 @@ def main() -> None:
 
     dis = np.array([abs(r[3] - r[4]) for r in rows])
     tau = float(np.quantile(dis, QUANTILE))
-    slope, intercept = APP_ENSEMBLE["photo"]
+    slope, intercept = params["photo"]
     out = ["## Consistency check: abstain threshold on the app pipeline\n",
            f"{len(rows)} image × condition scores ({len(args.datasets)} datasets × {', '.join(CONDITIONS)}), shipped ensemble. "
            f"Disagreement = |ensemble score − ensemble score on squeezed views| (JPEG q75 + 3×3 median).\n",

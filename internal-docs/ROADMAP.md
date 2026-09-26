@@ -53,6 +53,13 @@ the defense with the best worst-case robustness that stays within the
 clean-accuracy and on-device cost budget. It starts once Phase 1 has fixed the
 model, because a defense is evaluated on a specific detector.
 
+**Phase 2 result:** no phone-feasible inference-time defense survives an
+adaptive attacker on the shipped ensemble. The consistency check also flags 1 in
+6 genuine COCO photos (MODEL.md "Adversarial robustness"), so none is shipped.
+**Phase 2b:** adversarial fine-tuning at ε = 4/255
+(`tools/adv_finetune.py`, `notebooks/adversarial_finetune.ipynb`, free Colab or
+Kaggle GPU). It ships only if it passes the clean and robust gates in MODEL.md.
+
 Order: Phase 1 (including the ensemble decision) → Phase 2 → V2. The goal is a
 working Android app with good, well-calibrated results before any other platform.
 

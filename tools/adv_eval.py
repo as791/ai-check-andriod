@@ -212,10 +212,10 @@ class Ensemble(torch.nn.Module):
     runs = 3
     models = 2
 
-    def __init__(self, bundled: Bundled, cf: CommunityForensics, shipped: bool = False):
+    def __init__(self, bundled: Bundled, cf: CommunityForensics, shipped: bool = False, params: dict | None = None):
         super().__init__()
         self.bundled, self.cf = bundled, cf
-        e = APP_ENSEMBLE
+        e = params or APP_ENSEMBLE
         self.stats = (e["mean_d"], e["std_d"], e["mean_c"], e["std_c"]) if shipped else (0.0, 1.0, 0.0, 1.0)
 
     def fit(self, clean: torch.Tensor) -> None:
@@ -438,6 +438,8 @@ def main() -> None:
     parser.add_argument("--datasets", type=Path, nargs="+", required=True)
     parser.add_argument("--bundled", type=Path, default=Path("app/src/main/assets/models/ai-image-detector.onnx"))
     parser.add_argument("--commfor-onnx", type=Path, default=Path("app/src/main/assets/models/commfor-224.onnx"))
+    parser.add_argument("--ensemble-params", type=Path, default=None,
+                        help="ensemble-params.json for a candidate model set (default: the app's APP_ENSEMBLE)")
     parser.add_argument("--clean-per-class", type=int, default=60)
     parser.add_argument("--attack-per-class", type=int, default=24)
     parser.add_argument("--eps", default="4,8", help="L-inf budgets in /255")
@@ -490,8 +492,11 @@ def main() -> None:
     if args.model == "ensemble":
         if args.defense == "ensemble":
             sys.exit("--defense ensemble refits the ensemble; with --model ensemble use --defense none.")
-        detector = Ensemble(bundled, cf, shipped=True)
-        Defense.shipped_calibration = APP_ENSEMBLE["photo"]
+        from evaluate import load_ensemble_params
+
+        params = load_ensemble_params(args.ensemble_params) if args.ensemble_params else APP_ENSEMBLE
+        detector = Ensemble(bundled, cf, shipped=True, params=params)
+        Defense.shipped_calibration = params["photo"]
     else:
         detector = bundled
     defense: Defense = {

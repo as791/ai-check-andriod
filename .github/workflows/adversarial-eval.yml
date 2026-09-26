@@ -26,6 +26,9 @@ on:
       square_images:
         description: Images attacked with the (slow) black-box Square Attack
         default: '30'
+      assets_branch:
+        description: Evaluate the model files + ensemble-params.json from this branch (empty = main's app models)
+        default: ''
       smoke:
         description: Tiny end-to-end run (a few images, 2 steps) to check the pipeline
         type: boolean
@@ -43,6 +46,14 @@ jobs:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Use the candidate model files
+        if: inputs.assets_branch != ''
+        env:
+          BRANCH: ${{ inputs.assets_branch }}
+        run: |
+          git fetch --depth 1 origin "$BRANCH"
+          git checkout FETCH_HEAD -- app/src/main/assets/models internal-docs/ensemble-params.json
 
       - uses: actions/setup-python@v5
         with:
@@ -63,6 +74,7 @@ jobs:
             --datasets eval-data/defactify eval-data/mj-dalle-sd-nbp \
             --attack-per-class ${{ inputs.attack_per_class }} --clean-per-class ${{ inputs.clean_per_class }} \
             --square-images ${{ inputs.square_images }} \
+            ${{ inputs.assets_branch != '' && '--ensemble-params internal-docs/ensemble-params.json' || '' }} \
             --out adv-results ${{ inputs.smoke && '--smoke' || '' }}
 
       - name: Upload results (numbers only)
@@ -73,12 +85,21 @@ jobs:
           path: adv-results/
 
   consistency-threshold:
+    if: contains(inputs.defenses, 'consistency')
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Use the candidate model files
+        if: inputs.assets_branch != ''
+        env:
+          BRANCH: ${{ inputs.assets_branch }}
+        run: |
+          git fetch --depth 1 origin "$BRANCH"
+          git checkout FETCH_HEAD -- app/src/main/assets/models internal-docs/ensemble-params.json
 
       - uses: actions/setup-python@v5
         with:
@@ -97,6 +118,7 @@ jobs:
           mkdir -p adv-results
           python tools/consistency_calibrate.py --datasets eval-data/defactify eval-data/mj-dalle-sd-nbp \
             --per-class ${{ inputs.smoke && '3' || inputs.clean_per_class }} \
+            ${{ inputs.assets_branch != '' && '--ensemble-params internal-docs/ensemble-params.json' || '' }} \
             --json adv-results/consistency-threshold.json | tee adv-results/consistency-threshold.md
           cat adv-results/consistency-threshold.md >> "$GITHUB_STEP_SUMMARY"
 

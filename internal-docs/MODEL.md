@@ -328,40 +328,104 @@ over the 5 sampled frames. Python mirror: `tools/evaluate.py` `APP_ENSEMBLE`.
 - **Still limited on talking-head video.** DF26 AUC is 0.746, and some generators
   (LTX, Hunyuan) fool both models.
 
-### Adversarial robustness (Phase 2, [run 36196534662](https://github.com/as791/genned/actions/runs/36196534662), #15)
+### Adversarial robustness (Phase 2, #15)
 
-`tools/adv_eval.py` attacks a differentiable copy of the app pipeline (onnx2torch,
-with the app's JPEG q92 inside the attack via a straight-through estimator):
-- white-box: FGSM, PGD with EOT, and a PGD adapted to each defense;
-- transfer from a surrogate model;
-- black-box Square Attack (200 queries).
+`tools/adv_eval.py` attacks a differentiable copy of the exact app pipeline. The
+copy is checked against the shipped files before any number counts:
+- the fp16 model files, converted with onnx2torch after
+  `fp16_weights.restore_fp32`;
+- the app's JPEG q92 and its Pillow resize inside the forward pass, with
+  gradients passed straight through;
+- parity with ONNX Runtime: 1e-5 for the bundled model and 2e-6 for Community
+  Forensics.
+
+Attacks:
+- white-box: FGSM, PGD with EOT, and a PGD adapted to the defense;
+- transfer from the bundled model alone, i.e. an attacker who knows one of the
+  two models;
+- black-box Square Attack, 200 queries.
 
 *Evasion* means an AI image shown LOW. *Framing* means a real image shown HIGH.
-*Laundered* means the result is re-scored after JPEG q75. Worst case is taken over
-all attacks at 8/255.
+*Laundered* means the result is re-scored after JPEG q75.
 
-| Defense | Model runs per check | Clean AUC | Worst evasion (direct / laundered) | Worst framing | Square (black box) | Eligible |
-|---|---|---|---|---|---|---|
-| none | 2 | 0.848 | 100% / 100% | 100% | 83% | – |
-| **consistency** (JPEG75 + median-3 disagreement → abstain) | 4 | 0.848 | 91.7% / 100% | **20.8%** | 92% | ✅ selected by the rule |
-| transform (4 random resize/JPEG views) | 4 | 0.899 | 100% / 100% | 100% | **33%** | ✅ |
-| ensemble | 3 | 0.913 | 100% / 100% | 100% | 58% | ✅ |
-| smoothing (8 noisy copies, σ = 0.03) | 8 | 0.648 | 100% / 83% | 100% | 0% | ❌ loses clean accuracy, over budget |
+**The shipped ensemble** ([run 36227004230](https://github.com/as791/genned/actions/runs/36227004230)):
+60 AI + 60 real attacked images, 300 clean, 30 for Square.
 
-Reading:
-- **No inference-time defense that is cheap enough for a phone stops an adaptive
-  white-box attacker.** This matches the literature. Only training-time defenses,
-  such as adversarial training, move this number, and those need GPU training.
-- The consistency check is the only defense that meaningfully protects real
-  people. Real images pushed to HIGH drop from 100% to 21%, because the attacked
-  image is caught and the app abstains.
-- Random transforms make black-box queries much harder.
+| At 8/255 | No defense (3 model runs) | Consistency check (6 runs) |
+|---|---|---|
+| Clean AUC / real shown HIGH / AI shown LOW | 0.903 / 0.7% / 11.3% | same |
+| Clean real photos abstained, attack harness | 0% | 8.0% |
+| **Clean real photos abstained, app pipeline (worst dataset)** | 0% | **16.7%** (Defactify; 1.3% on MJ/DALL·E/SD/NBP) |
+| PGD with EOT (attacker ignores the check) | 100% fooled | 0% (all abstained) |
+| **Adaptive PGD** (attacker also evades the check) | – | **77% fooled; 100% after laundering** |
+| FGSM | 93% | 88% |
+| Transfer | 100% | 0% direct, 37% laundered |
+| Square (black box) | 80% | 80% |
+| Framing | 100% | 68–73% |
 
-Caveats:
-- The sample is small: 24 AI and 24 real images (12 for Square).
-- The run used the single bundled model at the old LOW < 25% band, before the
-  ensemble shipped. Re-run it on the ensemble before integrating any defense.
-- Not yet benchmarked: TRIM and RAID (#15).
+At 4/255 the picture is the same. With no defense, 93–100% of attacks succeed. With the
+consistency check, the adaptive PGD gets 78% through (98% laundered), and framing 72–78%.
+
+**Verdict:**
+- **No inference-time defense is shipped.** The consistency check (feature
+  squeezing: JPEG q75 + 3×3 median, abstain above the 95th-percentile
+  disagreement) only stops attackers who don't adapt to it. An adaptive
+  attacker still gets 77–100% through, and black-box queries aren't slowed.
+- Its one real gain is less framing (100% → about 70%). In exchange, on the
+  real app pipeline it tells **1 in 6 genuine COCO photos** they "may have
+  been altered". That fails the ≤ 10% abstain gate, and it harms exactly the
+  people the check is meant to protect.
+- Raising its threshold enough to pass the gate would cut the remaining
+  protection further.
+
+The earlier single-model run ([36196534662](https://github.com/as791/genned/actions/runs/36196534662),
+n = 24) also covered:
+- random transforms: cut Square from 83% to 33%, but not white-box attacks;
+- randomized smoothing: clean AUC fell to 0.648, so it's ineligible.
+
+**Also found:**
+- Community Forensics' logit moves by up to 1.3 when pixels change by under
+  1/255, e.g. torch vs Pillow bilinear resize.
+- That is why squeezing alone costs clean AUC (0.989 → 0.946 on Defactify), and
+  why the consistency check misfires on clean photos.
+
+### Phase 2b: adversarial fine-tuning
+
+Only training-time defenses move adaptive white-box numbers. `tools/adv_finetune.py`
+fine-tunes each model with PGD adversarial training (Madry et al.):
+- batches are half clean, half PGD-3 at ε = 4/255;
+- low learning rate, frozen BatchNorm statistics;
+- data gets the app's preprocessing, including random original / jpeg75 /
+  social conditions;
+- **train splits only**, with `fetch_eval_data.py --strict-split`. Every
+  benchmark uses the test splits.
+
+It keeps the epoch with the best PGD-10 robust accuracy on Defactify
+validation whose clean AUC is within 0.01 of the starting model's.
+
+**How to run it:**
+1. Open `notebooks/adversarial_finetune.ipynb` in Colab or Kaggle (free
+   T4/P100).
+2. Add an `HF_TOKEN` secret with write scope.
+3. Run all, about 1–1.5 h. The weights go to a private Hugging Face repo
+   `<user>/genned-robust`.
+4. Then run **Ensemble build** with
+   `bundled_checkpoint=<repo>:bundled-robust.pt`,
+   `commfor_checkpoint=<repo>:commfor-robust.pt` and
+   `assets_branch=model-assets-robust`. This exports, converts to fp16,
+   parity-checks, benchmarks photos and video, and fits the calibration.
+5. Then run **Adversarial eval** with
+   `assets_branch=model-assets-robust`, `defenses=["none"]`.
+
+**Ship gates** (robust vs current ensemble):
+1. Worst-case AI caught at 5% false alarms over photos + video stays ≥ 27%
+   (now 30%).
+2. Real shown HIGH ≤ 5% and AI shown LOW ≤ 10% at the recalibrated bands.
+3. Video AUCs don't drop more than 0.02.
+4. Worst-case evasion at 4/255, all attacks, direct and laundered, falls from
+   100% to **≤ 50%**, and framing at 4/255 falls too.
+
+8/255 is reported but not gated. If a gate fails, the current models stay.
 
 Caveats: MS-COCO (Defactify's real photos) is a very common training source, so
 Defactify numbers may be optimistic. What the second dataset's "real" class

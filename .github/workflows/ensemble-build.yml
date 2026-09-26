@@ -4,8 +4,10 @@ name: Ensemble build
 # detector + Community Forensics 224), benchmarks the exact files the app will bundle
 # on photos and video, and fits the ensemble's standardization + calibration
 # (tools/ensemble_calibrate.py). Manual only. If every parity check passes, the model
-# files and the fitted parameters are pushed to the `model-assets` branch for review;
+# files and the fitted parameters are pushed to the `assets_branch` branch for review;
 # nothing lands on main from here. Images and videos never leave the runner.
+# Adversarially fine-tuned weights (tools/adv_finetune.py, #15) can replace either model:
+# pass "hf-repo:filename" in bundled_checkpoint / commfor_checkpoint.
 on:
   workflow_dispatch:
     inputs:
@@ -15,6 +17,15 @@ on:
       videos_per_class:
         description: Videos per class (real / AI) per video dataset
         default: '100'
+      bundled_checkpoint:
+        description: Fine-tuned bundled weights, "hf-repo:file" (empty = the app's current model)
+        default: ''
+      commfor_checkpoint:
+        description: Fine-tuned Community Forensics weights, "hf-repo:file" (empty = the published model)
+        default: ''
+      assets_branch:
+        description: Branch the built files + parameters are pushed to
+        default: model-assets
 
 permissions:
   contents: write
@@ -43,11 +54,19 @@ jobs:
         run: tools/fetch_all_eval_data.sh ${{ inputs.samples_per_class }}
 
       - name: Build model files (export, fp16 weights, parity, app ORT compatibility)
+        env:
+          BUNDLED_CHECKPOINT: ${{ inputs.bundled_checkpoint }}
+          COMMFOR_CHECKPOINT: ${{ inputs.commfor_checkpoint }}
         run: |
           mkdir -p eval-results
-          python tools/build_models.py --dataset eval-data/defactify \
-            --bundled app/src/main/assets/models/ai-image-detector.onnx \
-            --out model-assets --report eval-results/parity.md
+          args=(--dataset eval-data/defactify --out model-assets --report eval-results/parity.md)
+          if [ -n "$BUNDLED_CHECKPOINT" ]; then
+            args+=(--bundled-checkpoint "$BUNDLED_CHECKPOINT")
+          else
+            args+=(--bundled app/src/main/assets/models/ai-image-detector.onnx)
+          fi
+          if [ -n "$COMMFOR_CHECKPOINT" ]; then args+=(--commfor-checkpoint "$COMMFOR_CHECKPOINT"); fi
+          python tools/build_models.py "${args[@]}"
 
       - name: Benchmark the built files on photos
         run: |
@@ -108,14 +127,16 @@ jobs:
           name: ensemble-build-results
           path: eval-results/
 
-      - name: Push model files + parameters to the model-assets branch
+      - name: Push model files + parameters to the assets branch
+        env:
+          BRANCH: ${{ inputs.assets_branch }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b model-assets
+          git checkout -b "$BRANCH"
           cp model-assets/*.onnx app/src/main/assets/models/
           cp eval-results/ensemble-params.json internal-docs/ensemble-params.json
           cp eval-results/report.md internal-docs/ensemble-build-report.md
           git add app/src/main/assets/models/*.onnx internal-docs/ensemble-params.json internal-docs/ensemble-build-report.md
           git commit -m "Ensemble build ${{ github.run_id }}: fp16-weight models + fitted ensemble parameters"
-          git push -f origin model-assets
+          git push -f origin "$BRANCH"

@@ -83,6 +83,34 @@ def _load_state_dict(checkpoint_path: Path) -> dict:
     return {k.removeprefix("module."): v for k, v in raw.items()}
 
 
+def export_bundled(model, output: Path, opset: int = 17):
+    """Export an efficientnet_b4 (num_classes=2) to the app's ONNX layout: input
+    "pixel_values" [1, 3, 380, 380], output "logits" [ai, human]. Returns the dummy input."""
+    import torch
+
+    model.eval()
+    dummy_input = torch.randn(1, 3, INPUT_SIZE, INPUT_SIZE, dtype=torch.float32)
+    export_kwargs = dict(
+        input_names=["pixel_values"],
+        output_names=["logits"],
+        opset_version=opset,
+        dynamic_axes=None,  # fixed batch size of 1, matching ModelConfig.INPUT_SHAPE
+    )
+    try:
+        # dynamo=False forces the older, well-established TorchScript-tracing
+        # exporter. Confirmed necessary by actually running this: on some newer
+        # PyTorch versions, plain torch.onnx.export() defaults to the newer
+        # dynamo-based exporter, which for this architecture silently produced a
+        # ~1MB "export" (graph structure present, 325 initializers matching the
+        # real layer count, but almost no actual weight data - not an error, just
+        # wrong) instead of the ~70-80MB a real fp32 EfficientNet-B4 export should
+        # be. Older torch versions don't know this kwarg at all, hence the fallback.
+        torch.onnx.export(model, dummy_input, str(output), dynamo=False, **export_kwargs)
+    except TypeError:
+        torch.onnx.export(model, dummy_input, str(output), **export_kwargs)
+    return dummy_input
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model-id", default=MODEL_ID, help="Hugging Face model repo id")
@@ -146,28 +174,8 @@ def main() -> None:
     model.eval()
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-
-    dummy_input = torch.randn(1, 3, INPUT_SIZE, INPUT_SIZE, dtype=torch.float32)
-
     print(f"Exporting to {args.output} (opset {args.opset}) ...")
-    export_kwargs = dict(
-        input_names=["pixel_values"],
-        output_names=["logits"],
-        opset_version=args.opset,
-        dynamic_axes=None,  # fixed batch size of 1, matching ModelConfig.INPUT_SHAPE
-    )
-    try:
-        # dynamo=False forces the older, well-established TorchScript-tracing
-        # exporter. Confirmed necessary by actually running this: on some newer
-        # PyTorch versions, plain torch.onnx.export() defaults to the newer
-        # dynamo-based exporter, which for this architecture silently produced a
-        # ~1MB "export" (graph structure present, 325 initializers matching the
-        # real layer count, but almost no actual weight data - not an error, just
-        # wrong) instead of the ~70-80MB a real fp32 EfficientNet-B4 export should
-        # be. Older torch versions don't know this kwarg at all, hence the fallback.
-        torch.onnx.export(model, dummy_input, str(args.output), dynamo=False, **export_kwargs)
-    except TypeError:
-        torch.onnx.export(model, dummy_input, str(args.output), **export_kwargs)
+    dummy_input = export_bundled(model, args.output, args.opset)
 
     exported_mb = args.output.stat().st_size / 1e6
     print(f"Exported file size: {exported_mb:.1f} MB")

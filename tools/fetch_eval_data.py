@@ -72,6 +72,9 @@ def main() -> None:
     parser.add_argument("--dataset", required=True, help="Hugging Face dataset id")
     parser.add_argument("--config", default=None, help="Dataset config name, if it has several")
     parser.add_argument("--split", default="test", help="Preferred split (falls back to validation, then train)")
+    parser.add_argument("--strict-split", action="store_true",
+                        help="Fail instead of falling back when --split is missing (training data must "
+                             "never silently come from the test split the benchmarks use)")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--per-class", type=int, default=250, help="Images per class (AI is spread across generators)")
     parser.add_argument("--seed", type=int, default=1234)
@@ -89,6 +92,8 @@ def main() -> None:
     from datasets import get_dataset_split_names, load_dataset
 
     splits = get_dataset_split_names(args.dataset, args.config)
+    if args.strict_split and args.split not in splits:
+        sys.exit(f"{args.dataset}: split '{args.split}' not found (has {splits}); refusing to fall back")
     split = next((s for s in (args.split, "test", "validation", "train") if s in splits), splits[0])
     print(f"{args.dataset}: splits={splits}, using '{split}'")
 

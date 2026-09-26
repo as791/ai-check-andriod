@@ -163,31 +163,46 @@ class Bundled(torch.nn.Module):
 
 
 class CommunityForensics(torch.nn.Module):
-    """Community Forensics ViT-S 224 with the app's preprocessing (short side 256, crop 224)."""
+    """The shipped Community Forensics ViT-S 224 file (onnx2torch) with the app's exact
+    preprocessing. The resize is straight-through: the forward pass is the app's own
+    geometry (uint8 -> PIL bilinear -> short side 256 -> center crop 224, as
+    evaluate.commfor_view), the backward pass a torch antialiased bilinear resize. They
+    differ by < 1/255 per pixel, but this ViT's logit moves by up to ~1.3 on that, so the
+    forward pass must be the app's pixels exactly."""
 
     runs = 1
     models = 1
 
-    def __init__(self):
+    def __init__(self, onnx_path: Path):
         super().__init__()
-        from eval_candidates import CommunityForensics as Candidate
+        import onnx
+        from onnx2torch import convert
 
-        candidate = Candidate(224)
-        candidate.load()
-        self.net = candidate.model.eval()
+        from fp16_weights import restore_fp32
+
+        self.net = convert(restore_fp32(onnx.load(str(onnx_path)))).eval()
         for p in self.net.parameters():
             p.requires_grad_(False)
-            # Match the shipped commfor-224.onnx, which stores these weights as fp16
-            # (tools/fp16_weights.py, min 1024 elements).
-            if p.numel() >= 1024:
-                p.data = p.data.half().float()
+
+    @staticmethod
+    def _app_view(x: torch.Tensor) -> torch.Tensor:
+        from evaluate import commfor_view
+
+        out = []
+        for img in x.detach().clamp(0, 1):
+            arr = (img.permute(1, 2, 0).numpy() * 255).round().astype(np.uint8)
+            view = commfor_view(Image.fromarray(arr))
+            out.append(torch.from_numpy(np.asarray(view, dtype=np.float32) / 255.0).permute(2, 0, 1))
+        return torch.stack(out)
 
     def forward(self, x: torch.Tensor, app_jpeg: bool = True) -> torch.Tensor:
         if app_jpeg:
             x = jpeg_ste(x, 92)
-        x = F.interpolate(x, size=(256, 256), mode="bilinear", align_corners=False, antialias=True)
-        x = x[:, :, 16:240, 16:240]
-        return self.net((x - MEAN_T) / STD_T).reshape(-1)
+        smooth = F.interpolate(x, size=(256, 256), mode="bilinear", align_corners=False, antialias=True)
+        smooth = smooth[:, :, 16:240, 16:240]
+        view = smooth + (self._app_view(x) - smooth).detach()
+        z = (view - MEAN_T) / STD_T
+        return torch.cat([self.net(z[i : i + 1]).reshape(-1) for i in range(z.shape[0])])
 
 
 class Ensemble(torch.nn.Module):
@@ -459,7 +474,7 @@ def main() -> None:
 
     # Community Forensics: the ensemble's partner, and the surrogate for transfer attacks
     # on single-model defenses (no gradients from the target).
-    cf = CommunityForensics()
+    cf = CommunityForensics(args.commfor_onnx)
     from evaluate import CommforOnnx
 
     shipped_cf = CommforOnnx(args.commfor_onnx)
